@@ -49,13 +49,13 @@ class YtdlLinkParser:
 
     def _store_data(self, data):
         malformed = 0
-        links = []
+        video_ids = []
         for (_, value) in data.items():
             if not isinstance(value, list):
                 raise RuntimeError("Unexpected input data format")
             for link in value:
-                if (l := self._check_link(link)) is not None:
-                    links.append(l)
+                if (i := self._check_link(link)) is not None:
+                    video_ids.append(i)
                     continue
                 malformed += 1
         if malformed > 0:
@@ -64,7 +64,7 @@ class YtdlLinkParser:
         if len(links) == 0:
             t = "No links found!"
             Message(t, form="warn").print()
-        self.links = links
+        self.video_ids = video_ids
 
     def _check_link(self, link):
         if (r := self._rex.get("normal").search(link)) is not None:
