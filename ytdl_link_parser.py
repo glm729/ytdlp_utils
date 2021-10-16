@@ -17,7 +17,10 @@ from message import Message
 
 class YtdlLinkParser:
 
-    _ = {}
+    _rex = {
+        "normal": re.compile(r"(?<=[\?&]v=)(?P<id>[^\?&]+)"),
+        "short": re.compile(r"(?<=youtu\.be\/)(?P<id>[^\?&]+)")
+    }
 
     def __init__(self, path=None):
         if path is not None:
@@ -28,7 +31,7 @@ class YtdlLinkParser:
     def read_yaml(self, path):
         try:
             with open(path, "r") as fh:
-                self.data = yaml.safe_load(fh.read())
+                self.data = self._store_data(yaml.safe_load(fh.read()))
         except FileNotFoundError as error:
             t = f"File does not exist:  {path}"
             Message(t, form="exit").print()
@@ -37,8 +40,35 @@ class YtdlLinkParser:
             t = f"Failed to parse YAML:  {path}"
             Message(t, form="exit").print()
             raise error
-
-    def parse(self):
-        pass
+        except (AttributeError, RuntimeError) as error:
+            t = "Unexpected input data format"
+            Message(t, form="exit").print()
+            raise error
 
     # ---- Private methods ----
+
+    def _store_data(self, data):
+        malformed = 0
+        links = []
+        for (_, value) in data.items():
+            if not isinstance(value, list):
+                raise RuntimeError("Unexpected input data format")
+            for link in value:
+                if (l := self._check_link(link)) is not None:
+                    links.append(l)
+                    continue
+                malformed += 1
+        if malformed > 0:
+            t = f"{len(malformed)} links could not be identified"
+            Message(t, form="warn").print()
+        if len(links) == 0:
+            t = "No links found!"
+            Message(t, form="warn").print()
+        self.links = links
+
+    def _check_link(self, link):
+        if (r := self._rex.get("normal").search(link)) is not None:
+            return r.group("id")
+        if (r := self._rex.get("short").search(link)) is not None:
+            return r.group("id")
+        return None
