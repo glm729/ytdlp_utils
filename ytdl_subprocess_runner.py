@@ -16,7 +16,7 @@
 import re
 import subprocess
 
-from message import Message
+from _modules.message import Message
 
 
 # Class definition
@@ -26,7 +26,6 @@ from message import Message
 class YtdlSubprocessRunner:
 
     _rex = {
-        "link": None,
         "progress": re.compile(''.join((
             r"^\[download\] +",
             r"(?P<pc>\d+\.\d)%",
@@ -45,21 +44,25 @@ class YtdlSubprocessRunner:
         "output": "%(uploader)s/%(title)s.%(ext)s"
     }
 
-    def __init__(self, links=tuple(), restart_count=10):
-        self._store_data(links)
+    def __init__(self, video_ids=tuple(), slow_count=10, restart_count=10):
+        self._store_data(video_ids)
+        self.slow_count = slow_count
         self.restart_count = restart_count
 
     # ---- Private methods ----
 
-    def _store_data(self, links):
+    def _store_data(self, video_ids):
         self.data = []
-        for link in links:
-            if (d := self._store_data_ifn(link)) is not None:
+        for video_id in video_ids:
+            if (d := self._store_data_ifn(video_id)) is not None:
                 self.data.append(d)
 
-    def _store_data_ifn(self, link):
+    def _store_data_ifn(self, video_id):
         return {
-            "uri": link
+            "id": video_id,
+            "progress": 0,
+            "restart_count": 0,
+            "slow_count": 0
         }
 
     def _build_cmd(self, idx):
@@ -85,8 +88,11 @@ class YtdlSubprocessRunner:
             self._check_speed(idx, s)
 
     def _check_percentage(self, idx, percentage):
-        t = f"Video {idx} reached {percentage}%"
-        Message(t, form="info").print()
+        pc = int(percentage.split(".")[0])
+        if pc >= (p := self.data[idx].get("progress") + 20):
+            self.data[idx].update({ "progress": p })
+            t = f"Video {idx} reached {p}%"
+            Message(t, form="info").print()
 
     def _check_speed(self, speed):
         pass
