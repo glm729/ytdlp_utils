@@ -75,7 +75,7 @@ class YtdlSubprocessRunner:
             self._opt.get("format"),
             "--output",
             self._opt.get("output"),
-            self.links[idx])
+            self.video_ids[idx])
 
     def _check_line(self, idx, line):
         search_result = self._rex.get("progress").search(line)
@@ -94,8 +94,21 @@ class YtdlSubprocessRunner:
             t = f"Video {idx} reached {p}%"
             Message(t, form="info").print()
 
-    def _check_speed(self, speed):
-        pass
+    def _check_speed(self, idx, speed):
+        if speed.endswith("K"):
+            update_value = self.data[idx].get("slow_count") + 1
+            if update_value > self.slow_count:
+                self._restart(idx)
+                return
+        else:
+            update_value = 0
+        self.data[idx].update({ "slow_count": update_value })
+
+    def _restart(self, idx):
+        self._process[idx].kill()
+        self._process[idx] = self._new_process(idx)
+        # etc.
+        # TODO
 
 
 # Testing
