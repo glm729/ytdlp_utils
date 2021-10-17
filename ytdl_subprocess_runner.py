@@ -44,26 +44,32 @@ class YtdlSubprocessRunner:
         "output": "%(uploader)s/%(title)s.%(ext)s"
     }
 
-    def __init__(self, video_ids=tuple(), slow_count=10, restart_count=10):
-        self._store_data(video_ids)
-        self._proc = list(None for _ in video_ids)
+    def __init__(self, video_id, slow_count=10, restart_count=10):
+        self._store_data(video_id)
         self.slow_count = slow_count
         self.restart_count = restart_count
 
+    def run(self):
+        t = "Starting new process"
+        Message(t, form="ok").print()
+        self._new_process()
+        while True:
+            line = self._proc.stdout.readline()
+            if not line:
+                break
+            self._check_line(line.decode().strip())
+
     # ---- Private methods ----
 
-    def _store_data(self, video_ids):
-        self.data = tuple(map(self._store_data_ifn, video_ids))
-
-    def _store_data_ifn(self, video_id):
-        return {
+    def _store_data(self, video_id):
+        self.data = {
             "id": video_id,
             "progress": 0,
             "restart_count": 0,
             "slow_count": 0
         }
 
-    def _build_cmd(self, idx):
+    def _build_cmd(self):
         return (
             "youtube-dl",
             "--force-ipv4",
@@ -73,42 +79,52 @@ class YtdlSubprocessRunner:
             self._opt.get("format"),
             "--output",
             self._opt.get("output"),
-            self.video_ids[idx])
+            self.data.get("id"))
 
-    def _check_line(self, idx, line):
+    def _check_line(self, line):
         search_result = self._rex.get("progress").search(line)
         if search_result is None:
             return
         data = search_result.groupdict()
         if (p := data.get("pc", None)) is not None:
-            self._check_percentage(idx, p)
+            self._check_percentage(p)
         if (s := data.get("sp", None)) is not None:
-            self._check_speed(idx, s)
+            self._check_speed(s)
 
-    def _check_percentage(self, idx, percentage):
+    def _check_percentage(self, percentage):
         pc = int(percentage.split(".")[0])
-        if pc >= (p := self.data[idx].get("progress") + 20):
-            self.data[idx].update({ "progress": p })
-            t = f"Video {idx} reached {p}%"
+        if pc >= (p := self.data.get("progress") + 20):
+            self.data.update({ "progress": p })
+            t = f"Download reached {p}%"
             Message(t, form="info").print()
 
-    def _check_speed(self, idx, speed):
+    def _check_speed(self, speed):
         if speed.endswith("K"):
-            update_value = self.data[idx].get("slow_count") + 1
+            update_value = self.data.get("slow_count") + 1
             if update_value > self.slow_count:
-                self._restart(idx)
+                self._restart()
                 return
         else:
             update_value = 0
-        self.data[idx].update({ "slow_count": update_value })
+        self.data.update({ "slow_count": update_value })
 
-    def _restart(self, idx):
-        self._proc[idx].kill()
-        self._proc[idx] = self._new_process(idx)
+    def _restart(self):
+        self._proc.kill()
+        rsc = self.data.get("restart_count") + 1
+        if rsc > self.restart_count:
+            t = "Reached restart limit"
+            Message(t, form="exit").print()
+            return
+        t = " ".join((
+            "Slow speed limit reached, restarting download",
+            f"(restarts remaining: {self.restart_count - rsc})"))
+        Message(t, form="warn").print()
+        self.data.update({ "restart_count": rsc, "slow_count": 0 })
+        self._new_process()
 
-    def _new_process(self, idx):
-        self._proc[idx] = subprocess.Popen(
-            self._build_cmd(idx),
+    def _new_process(self):
+        self._proc = subprocess.Popen(
+            self._build_cmd(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
 
@@ -117,39 +133,7 @@ class YtdlSubprocessRunner:
 # -----------------------------------------------------------------------------
 
 
-import subprocess
-
-
-uri = "gzBu6vRzfKw"
-
-out = "%(uploader)s/%(title)s.%(ext)s"
-
-fmt = "/".join((
-    "298+bestaudio",
-    "136+bestaudio",
-    "22",
-    "bestvideo[height=720][fps=60]+bestaudio",
-    "bestvideo[height=720][fps=30]+bestaudio",
-    "bestvideo[height<=480]+bestaudio"))
-
-cmd = (
-    "youtube-dl",
-    "--force-ipv4",
-    "--geo-bypass",
-    "--format",
-    fmt,
-    "--output",
-    out,
-    "--newline",
-    uri)
-
-
 if __name__ == "__main__":
-    print(cmd)
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
-    while True:
-        line = proc.stdout.readline()
-        if not line:
-            break
-        print(f"{line.decode().strip()}\n", end='')
-    print("Done")
+    uri = "gzBu6vRzfKw"
+    sp_runner = YtdlSubprocessRunner(uri)
+    sp_runner.run()
