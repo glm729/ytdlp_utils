@@ -8,7 +8,7 @@
 import re
 import yaml
 
-from message import Message
+from _modules.message import Message
 
 
 # Class definition

@@ -46,16 +46,14 @@ class YtdlSubprocessRunner:
 
     def __init__(self, video_ids=tuple(), slow_count=10, restart_count=10):
         self._store_data(video_ids)
+        self._proc = list(None for _ in video_ids)
         self.slow_count = slow_count
         self.restart_count = restart_count
 
     # ---- Private methods ----
 
     def _store_data(self, video_ids):
-        self.data = []
-        for video_id in video_ids:
-            if (d := self._store_data_ifn(video_id)) is not None:
-                self.data.append(d)
+        self.data = tuple(map(self._store_data_ifn, video_ids))
 
     def _store_data_ifn(self, video_id):
         return {
@@ -105,10 +103,14 @@ class YtdlSubprocessRunner:
         self.data[idx].update({ "slow_count": update_value })
 
     def _restart(self, idx):
-        self._process[idx].kill()
-        self._process[idx] = self._new_process(idx)
-        # etc.
-        # TODO
+        self._proc[idx].kill()
+        self._proc[idx] = self._new_process(idx)
+
+    def _new_process(self, idx):
+        self._proc[idx] = subprocess.Popen(
+            self._build_cmd(idx),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
 
 
 # Testing
