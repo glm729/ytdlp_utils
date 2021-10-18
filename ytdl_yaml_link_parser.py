@@ -59,9 +59,10 @@ class YtdlYamlLinkParser:
                     continue
                 malformed += 1
         if malformed > 0:
-            t = f"{len(malformed)} links could not be identified"
+            s = '' if malformed == 1 else "s"
+            t = f"{malformed} link{s} could not be identified"
             Message(t, form="warn").print()
-        if len(links) == 0:
+        if len(video_ids) == 0:
             t = "No links found!"
             Message(t, form="warn").print()
         self.video_ids = video_ids
