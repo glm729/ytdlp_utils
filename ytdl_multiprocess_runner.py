@@ -18,8 +18,8 @@ from ytdl_subprocess_runner import YtdlSubprocessRunner
 
 class YtdlMultiprocessRunner:
 
-    def __init__(self, path=None):
-        self._set_ncore()
+    def __init__(self, path=None, ncore=1):
+        self._set_ncore(ncore)
         if path is not None:
             self.read_file(path)  # Assuming text for now
 
@@ -44,9 +44,19 @@ class YtdlMultiprocessRunner:
         sp_runner = YtdlSubprocessRunner(video_id)
         sp_runner.run()
 
-    def _set_ncore(self):
-        ncore = multiprocessing.cpu_count() - 2
-        self._ncore = 1 if ncore < 1 else ncore
+    def _set_ncore(self, ncore):
+        nc = multiprocessing.cpu_count() - 2
+        if nc < 1:
+            self._ncore = 1
+            return
+        if ncore <= nc:
+            self._ncore = ncore
+            return
+        t = ", ".join((
+            f"Specified number of cores ({ncore}) is too high",
+            f"limiting to {nc}"))
+        Message(t, form="warn").print()
+        self._ncore = nc
 
 
 # Operations
