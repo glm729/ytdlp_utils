@@ -18,7 +18,7 @@ from ytdl_subprocess_runner import YtdlSubprocessRunner
 
 class YtdlMultiprocessRunner:
 
-    def __init__(self, path=None, ncore=1):
+    def __init__(self, path=None, ncore=None):
         self._set_ncore(ncore)
         if path is not None:
             self.read_file(path)  # Assuming text for now
@@ -28,7 +28,8 @@ class YtdlMultiprocessRunner:
     def read_file(self, path):
         data = YtdlTextLinkParser(path=path)
         if len((v := data.video_ids)) > 0:
-            t = f"Found {len(v)} video IDs"
+            s = '' if len(v) == 1 else "s"
+            t = f"Found {len(v)} video ID{s}"
             Message(t, form="ok").print()
             self.video_ids = v
             return
@@ -49,13 +50,14 @@ class YtdlMultiprocessRunner:
         if nc < 1:
             self._ncore = 1
             return
-        if ncore <= nc:
-            self._ncore = ncore
-            return
-        t = ", ".join((
-            f"Specified number of cores ({ncore}) is too high",
-            f"limiting to {nc}"))
-        Message(t, form="warn").print()
+        if ncore:
+            if ncore <= nc:
+                self._ncore = ncore
+                return
+            t = ", ".join((
+                f"Specified number of cores ({ncore}) is too high",
+                f"limiting to {nc}"))
+            Message(t, form="warn").print()
         self._ncore = nc
 
 
