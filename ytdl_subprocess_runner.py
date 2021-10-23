@@ -7,6 +7,7 @@
 
 import re
 import subprocess
+import time
 
 from _modules.message import Message
 
@@ -46,16 +47,28 @@ class YtdlSubprocessRunner:
     def run(self):
         t = f"{self._id}: Starting download"
         Message(t, form="ok").print()
+        time_start = time.time()
         self._new_process()
         while (l := self._proc.stdout.readline()):
-            self._check_line_stdout(l.decode().strip())
+            self._check_line_stdout(l.decode().strip(), time_start)
         while (l := self._proc.stderr.readline()):
             self._check_line_stderr(l.decode().strip())
+        time_end = time.time() - time_start
         if self._ok:
-            (t, f) = (f"{self._id}: Video downloaded and merged", "ok")
+            m = {
+                "text": " ".join((
+                    f"{self._id}: Video downloaded and merged",
+                    f"in {time_end:.1f}s")),
+                "form": "ok"
+            }
         else:
-            (t, f) = (f"{self._id}: Video download failed", "exit")
-        Message(t, form=f).print()
+            m = {
+                "text": " ".join((
+                    f"{self._id}: Video download failed",
+                    f"after {time_end:.1f}s")),
+                "form": "exit"
+            }
+        Message(**m).print()
 
     # ---- Private methods ----
 
@@ -80,13 +93,13 @@ class YtdlSubprocessRunner:
             self._opt.get("output"),
             f"https://www.youtube.com/watch?v={self._id}")
 
-    def _check_line_stdout(self, line):
+    def _check_line_stdout(self, line, time_start):
         search_result = self._rex.get("progress").search(line)
         if search_result is None:
             return
         data = search_result.groupdict()
         if (p := data.get("pc", None)) is not None:
-            self._check_percentage(p)
+            self._check_percentage(p, time_start)
         if (s := data.get("sp", None)) is not None:
             self._check_speed(s)
 
@@ -98,11 +111,12 @@ class YtdlSubprocessRunner:
             self._restart(cause="403")
             return
 
-    def _check_percentage(self, percentage):
+    def _check_percentage(self, percentage, time_start):
         pc = int(percentage.split(".")[0])
         if pc >= (p := self.data.get("progress") + 20):
             self.data.update({ "progress": p })
-            t = f"{self._id}: Download reached {p}%"
+            tn = time.time() - time_start
+            t = f"{self._id}: Download reached {p}% ({tn:.1f}s)"
             Message(t, form="info").print()
 
     def _check_speed(self, speed):

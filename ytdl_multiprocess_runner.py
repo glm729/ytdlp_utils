@@ -6,6 +6,7 @@
 
 
 import multiprocessing
+import time
 
 from _modules.message import Message
 from ytdl_text_link_parser import YtdlTextLinkParser
@@ -36,8 +37,14 @@ class YtdlMultiprocessRunner:
         raise RuntimeError("No video IDs found")
 
     def run(self):
+        time_start = time.time()
         with multiprocessing.Pool(self._ncore) as worker_pool:
             worker_pool.map(self._run, self.video_ids)
+            # TODO: Capture and process returncodes
+        time_end = time.time() - time_start
+        s = '' if len(self.video_ids) == 1 else "s"
+        t = f"Video{s} downloaded in {time_end:.1f}s"
+        Message(t, form="ok").print()
 
     # ---- Private methods
 
