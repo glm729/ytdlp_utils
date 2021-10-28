@@ -116,7 +116,8 @@ class YtdlSubprocessRunner:
         if pc >= (p := self.data.get("progress") + 20):
             self.data.update({ "progress": p })
             tn = time.time() - time_start
-            t = f"{self._id}: Download reached {p}% ({tn:.1f}s)"
+            w = " " * (4 - len(str(p)))
+            t = f"{self._id}: Download reached {p}%{w}({tn:.1f}s)"
             Message(t, form="info").print()
 
     def _check_speed(self, speed):
