@@ -20,6 +20,7 @@ from ytdl_subprocess_runner import YtdlSubprocessRunner
 class YtdlMultiprocessRunner:
 
     def __init__(self, path=None, ncore=None):
+        self.q = multiprocessing.JoinableQueue()
         self._set_ncore(ncore)
         if path is not None:
             self.read_file(path)  # Assuming text for now
@@ -38,15 +39,32 @@ class YtdlMultiprocessRunner:
 
     def run(self):
         time_start = time.time()
-        with multiprocessing.Pool(self._ncore) as worker_pool:
-            worker_pool.map(self._run, self.video_ids)
-            # TODO: Capture and process returncodes
+        for video_id in self.video_ids:
+            self.q.put(video_id)
+        _procs = []
+        for _ in range(0, self._ncore):
+            p = multiprocessing.Process(target=self._target, daemon=True)
+            _procs.append(p)
+        for p in _procs:
+            p.start()
+        for p in _procs:
+            p.join()
+        self.q.join()
         time_end = time.time() - time_start
         s = '' if len(self.video_ids) == 1 else "s"
         t = f"Video{s} downloaded in {time_end:.1f}s"
         Message(t, form="ok").print()
 
     # ---- Private methods
+
+    def _target(self):
+        while True:
+            if self.q.empty():
+                return
+            video_id = self.q.get()
+            sp_runner = YtdlSubprocessRunner(video_id)
+            sp_runner.run()
+            self.q.task_done()
 
     def _run(self, video_id):
         sp_runner = YtdlSubprocessRunner(video_id)
