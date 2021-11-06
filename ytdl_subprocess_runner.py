@@ -7,6 +7,7 @@
 
 import re
 import subprocess
+import threading
 import time
 
 from _modules.message import Message
@@ -47,13 +48,11 @@ class YtdlSubprocessRunner:
     def run(self):
         t = f"{self._id}: Starting download"
         Message(t, form="ok").print()
-        time_start = time.time()
+        self._time_start = time.time()
         self._new_process()
-        while (l := self._proc.stdout.readline()):
-            self._check_line_stdout(l.decode().strip(), time_start)
-        while (l := self._proc.stderr.readline()):
-            self._check_line_stderr(l.decode().strip())
-        time_end = time.time() - time_start
+        self._start_threads()
+        self._wait()
+        time_end = time.time() - self._time_start
         if self._ok:
             m = {
                 "text": " ".join((
@@ -93,23 +92,28 @@ class YtdlSubprocessRunner:
             self._opt.get("output"),
             f"https://www.youtube.com/watch?v={self._id}")
 
-    def _check_line_stdout(self, line, time_start):
-        search_result = self._rex.get("progress").search(line)
-        if search_result is None:
-            return
-        data = search_result.groupdict()
-        if (p := data.get("pc", None)) is not None:
-            self._check_percentage(p, time_start)
-        if (s := data.get("sp", None)) is not None:
-            self._check_speed(s)
+    def _check_line_stdout(self, stdout, time_start):
+        while (l := stdout.readline()):
+            line = l.decode("utf-8").strip()
+            search_result = self._rex.get("progress").search(line)
+            if search_result is None:
+                continue
+            data = search_result.groupdict()
+            if (p := data.get("pc", None)) is not None:
+                self._check_percentage(p, time_start)
+            if (s := data.get("sp", None)) is not None:
+                self._check_speed(s)
 
-    def _check_line_stderr(self, line):
-        #=> DEBUG
-        t = f"\n{' ' * 7}".join(("STDERR:", line))
-        #<=
-        if line.endswith("HTTP Error 403: Forbidden"):
-            self._restart(cause="403")
-            return
+    def _check_line_stderr(self, stderr):
+        while (l := stderr.readline()):
+            line = l.decode("utf-8").strip()
+            #=> DEBUG
+            # t = f"\n{' ' * 7}".join(("STDERR:", line))
+            # Message(t, form="warn")
+            #<=
+            if line.endswith("HTTP Error 403: Forbidden"):
+                self._restart(cause="403")
+                continue
 
     def _check_percentage(self, percentage, time_start):
         pc = int(percentage.split(".")[0])
@@ -156,6 +160,26 @@ class YtdlSubprocessRunner:
             self._build_cmd(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
+        self._init_threads()
+
+    def _init_threads(self):
+        self._stdout_thread = threading.Thread(
+            target=self._check_line_stdout,
+            args=(self._proc.stdout, self._time_start),
+            daemon=True)
+        self._stderr_thread = threading.Thread(
+            target=self._check_line_stderr,
+            args=(self._proc.stderr,),
+            daemon=True)
+
+    def _start_threads(self):
+        self._stdout_thread.start()
+        self._stderr_thread.start()
+
+    def _wait(self):
+        self._proc.wait()
+        self._stdout_thread.join()
+        self._stderr_thread.join()
 
 
 # Operations
