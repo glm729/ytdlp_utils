@@ -21,6 +21,8 @@ class YtdlSubprocessRunner:
 
     _ok = True
 
+    _restart = True
+
     _rex = {
         "progress": re.compile(''.join((
             r"^\[download\] +",
@@ -49,7 +51,7 @@ class YtdlSubprocessRunner:
         t = f"{self._id}: Starting download"
         Message(t, form="ok").print()
         self._time_start = time.time()
-        while self._ok:
+        while self._restart:
             self._new_process()
             self._wait()
         time_end = time.time() - self._time_start
@@ -139,6 +141,7 @@ class YtdlSubprocessRunner:
         rsc = self.data.get("restart_count") + 1
         if rsc > self.restart_count:
             self._ok = False
+            self._restart = False
             t = f"{self._id}: Restart limit reached"
             Message(t, form="warn").print()
             return
@@ -173,6 +176,8 @@ class YtdlSubprocessRunner:
     def _wait(self):
         self._proc.wait()
         self._join_threads()
+        if self._proc.returncode == 0:
+            self._restart = False
 
     def _join_threads(self):
         self._stdout_thread.join()
