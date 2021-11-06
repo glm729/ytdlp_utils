@@ -49,9 +49,9 @@ class YtdlSubprocessRunner:
         t = f"{self._id}: Starting download"
         Message(t, form="ok").print()
         self._time_start = time.time()
-        self._new_process()
-        self._start_threads()
-        self._wait()
+        while self._ok:
+            self._new_process()
+            self._wait()
         time_end = time.time() - self._time_start
         if self._ok:
             m = {
@@ -153,16 +153,12 @@ class YtdlSubprocessRunner:
                 f"(remaining: {self.restart_count - rsc})"))
             Message(t, form="warn").print()
         self.data.update({ "restart_count": rsc, "slow_count": 0 })
-        self._new_process()
 
     def _new_process(self):
         self._proc = subprocess.Popen(
             self._build_cmd(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
-        self._init_threads()
-
-    def _init_threads(self):
         self._stdout_thread = threading.Thread(
             target=self._check_line_stdout,
             args=(self._proc.stdout, self._time_start),
@@ -171,13 +167,14 @@ class YtdlSubprocessRunner:
             target=self._check_line_stderr,
             args=(self._proc.stderr,),
             daemon=True)
-
-    def _start_threads(self):
         self._stdout_thread.start()
         self._stderr_thread.start()
 
     def _wait(self):
         self._proc.wait()
+        self._join_threads()
+
+    def _join_threads(self):
         self._stdout_thread.join()
         self._stderr_thread.join()
 
