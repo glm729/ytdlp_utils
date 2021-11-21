@@ -5,6 +5,7 @@
 # -----------------------------------------------------------------------------
 
 
+import queue
 import re
 import subprocess
 import threading
@@ -49,29 +50,24 @@ class YtdlSubprocessRunner:
         self.slow_count = slow_count
         self.restart_count = restart_count
 
+    # ---- Public methods
+
     def run(self):
-        t = f"{self._id}: Starting download"
-        Message(t, form="ok").print()
+        self._init_mq()
+        self._message("Starting download", "ok")
         self._time_start = time.time()
         while self._restart:
             self._new_process()
             self._wait()
         time_end = time.time() - self._time_start
         if self._ok:
-            m = {
-                "text": " ".join((
-                    f"{self._id}: Video downloaded and merged",
-                    f"in {time_end:.1f}s")),
-                "form": "ok"
-            }
+            t = f"Video downloaded and merged in {time_end:.1f}s"
+            f = "ok"
         else:
-            m = {
-                "text": " ".join((
-                    f"{self._id}: Video download failed",
-                    f"after {time_end:.1f}s")),
-                "form": "exit"
-            }
-        Message(**m).print()
+            t = f"Video download failed after {time_end:.1f}s"
+            f = "error"
+        self._message(t, f)
+        self._close_mq()
 
     # ---- Private methods ----
 
@@ -92,7 +88,7 @@ class YtdlSubprocessRunner:
             line = l.decode("utf-8").strip()
             #=> DEBUG
             # t = f"\n{' ' * 7}".join(("STDERR:", line))
-            # Message(t, form="warn")
+            # self._message(t, "warn")
             #<=
             if line.endswith("HTTP Error 403: Forbidden"):
                 self._restart(cause="403")
@@ -105,18 +101,16 @@ class YtdlSubprocessRunner:
             check_stage = self._rex["stage"].search(line)
             check_progress = self._rex["progress"].search(line)
             if check_merging is not None:
-                Message(f"{self._id}: Merging data", form="info").print()
+                self._message("Merging data", "info")
                 continue
             if check_stage is not None:
                 if self._stage == "start":
                     self._stage = "Video"
-                    t = f"{self._id}: Downloading video"
-                    Message(t, form="info").print()
+                    self._message("Downloading video", "info")
                 elif self._stage == "Video":
                     self._stage = "Audio"
                     self.data.update({ "progress": 0 })
-                    t = f"{self._id}: Downloading audio"
-                    Message(t, form="info").print()
+                    self._message("Downloading audio", "info")
                 continue
             if check_progress is not None:
                 data = check_progress.groupdict()
@@ -131,10 +125,8 @@ class YtdlSubprocessRunner:
             self.data.update({ "progress": p })
             tn = time.time() - time_start
             w = " " * (4 - len(str(p)))
-            t = " ".join((
-                f"{self._id}: {self._stage} download reached",
-                f"{p}%{w}({tn:.1f}s)"))
-            Message(t, form="info").print()
+            t = f"{self._stage} download reached {p}%{w}({tn:.1f}s)"
+            self._message(t, "info")
 
     def _check_speed(self, speed):
         if speed.endswith("K"):
@@ -146,11 +138,42 @@ class YtdlSubprocessRunner:
             update_value = 0
         self.data.update({ "slow_count": update_value })
 
+    def _close_mq(self):
+        self._running = False
+        self._q_msg.join()
+        self._t_msg.join()
+
+    def _fun_t_msg(self):
+        while self._running:
+            try:
+                task = self._q_msg.get(timeout=0.2)
+                self._print(Message(task[0], form=task[1]))
+                self._q_msg.task_done()
+            except queue.Empty:
+                pass
+
+    def _init_mq(self):
+        self._running = True
+        self._lock = threading.RLock()
+        self._q_msg = queue.Queue()
+        self._t_msg = threading.Thread(
+            target=self._fun_t_msg,
+            daemon=True)
+        self._t_msg.start()
+
     def _join_threads(self):
         self._stdout_thread.join()
         self._stderr_thread.join()
 
+    def _message(self, t, f):
+        self._lock.acquire()
+        try:
+            self._q_msg.put((f"{self._id}: {t}", f))
+        finally:
+            self._lock.release()
+
     def _new_process(self):
+        self._stage = "start"
         self._proc = subprocess.Popen(
             self._build_cmd(),
             stdout=subprocess.PIPE,
@@ -166,30 +189,35 @@ class YtdlSubprocessRunner:
         self._stdout_thread.start()
         self._stderr_thread.start()
 
+    def _print(self, m):
+        self._lock.acquire()
+        try:
+            m.print()
+        finally:
+            self._lock.release()
+
     def _restart(self, cause="slow"):
         self._proc.kill()
         rsc = self.data.get("restart_count") + 1
         if rsc > self.restart_count:
             self._ok = False
             self._restart = False
-            t = f"{self._id}: Restart limit reached"
-            Message(t, form="warn").print()
+            self._message("Restart limit reached", "warn")
             return
         if cause == "slow":
             t = " ".join((
-                f"{self._id}: Reached slow speed limit, restarting",
+                "Reached slow speed limit, restarting",
                 f"(remaining: {self.restart_count - rsc})"))
-            Message(t, form="warn").print()
+            self._message(t, "warn")
         elif cause == "403":
             t = " ".join((
-                f"{self._id}: Received HTTP Error 403, restarting",
+                f"Received HTTP Error 403, restarting",
                 f"(remaining: {self.restart_count - rsc})"))
-            Message(t, form="warn").print()
+            self._message(t, "warn")
         self.data.update({ "restart_count": rsc, "slow_count": 0 })
 
     def _store_data(self, video_id):
         self._id = video_id
-        self._stage = "start"
         self.data = {
             "id": video_id,
             "progress": 0,
