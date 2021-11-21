@@ -24,11 +24,13 @@ class YtdlSubprocessRunner:
     _restart = True
 
     _rex = {
+        "merging": re.compile(r"^\[Merger\] Merging formats into"),
         "progress": re.compile(''.join((
             r"^\[download\] +",
             r"(?P<pc>\d+\.\d)%",
             r" of \d+\.\d+[KM]iB at +",
-            r"(?P<sp>\d+\.\d+[KM])iB\/s")))
+            r"(?P<sp>\d+\.\d+[KM])iB\/s"))),
+        "stage": re.compile(r"^\[download\] Destination:")
     }
 
     _opt = {
@@ -75,6 +77,7 @@ class YtdlSubprocessRunner:
 
     def _store_data(self, video_id):
         self._id = video_id
+        self._stage = "start"
         self.data = {
             "id": video_id,
             "progress": 0,
@@ -97,14 +100,29 @@ class YtdlSubprocessRunner:
     def _check_line_stdout(self, stdout, time_start):
         while (l := stdout.readline()):
             line = l.decode("utf-8").strip()
-            search_result = self._rex.get("progress").search(line)
-            if search_result is None:
+            check_merging = self._rex["merging"].search(line)
+            check_stage = self._rex["stage"].search(line)
+            check_progress = self._rex["progress"].search(line)
+            if check_merging is not None:
+                Message(f"{self._id}: Merging data", form="info").print()
                 continue
-            data = search_result.groupdict()
-            if (p := data.get("pc", None)) is not None:
-                self._check_percentage(p, time_start)
-            if (s := data.get("sp", None)) is not None:
-                self._check_speed(s)
+            if check_stage is not None:
+                if self._stage == "start":
+                    self._stage = "Video"
+                    t = f"{self._id}: Downloading video"
+                    Message(t, form="info").print()
+                elif self._stage == "Video":
+                    self._stage = "Audio"
+                    self.data.update({ "progress": 0 })
+                    t = f"{self._id}: Downloading audio"
+                    Message(t, form="info").print()
+                continue
+            if check_progress is not None:
+                data = check_progress.groupdict()
+                if (p := data.get("pc", None)) is not None:
+                    self._check_percentage(p, time_start)
+                if (s := data.get("sp", None)) is not None:
+                    self._check_speed(s)
 
     def _check_line_stderr(self, stderr):
         while (l := stderr.readline()):
@@ -123,7 +141,9 @@ class YtdlSubprocessRunner:
             self.data.update({ "progress": p })
             tn = time.time() - time_start
             w = " " * (4 - len(str(p)))
-            t = f"{self._id}: Download reached {p}%{w}({tn:.1f}s)"
+            t = " ".join((
+                f"{self._id}: {self._stage} download reached",
+                f"{p}%{w}({tn:.1f}s)"))
             Message(t, form="info").print()
 
     def _check_speed(self, speed):
