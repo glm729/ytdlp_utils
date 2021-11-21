@@ -23,16 +23,6 @@ class YtdlSubprocessRunner:
 
     _restart = True
 
-    _rex = {
-        "merging": re.compile(r"^\[Merger\] Merging formats into"),
-        "progress": re.compile(''.join((
-            r"^\[download\] +",
-            r"(?P<pc>\d+\.\d)%",
-            r" of \d+\.\d+[KM]iB at +",
-            r"(?P<sp>\d+\.\d+[KM])iB\/s"))),
-        "stage": re.compile(r"^\[download\] Destination:")
-    }
-
     _opt = {
         "format": "/".join((
             "298+bestaudio",
@@ -42,6 +32,16 @@ class YtdlSubprocessRunner:
             "bestvideo[height=720][fps=30]+bestaudio",
             "bestvideo[height<=480]+bestaudio")),
         "output": "%(uploader)s/%(title)s.%(ext)s"
+    }
+
+    _rex = {
+        "merging": re.compile(r"^\[Merger\] Merging formats into"),
+        "progress": re.compile(''.join((
+            r"^\[download\] +",
+            r"(?P<pc>\d+\.\d)%",
+            r" of \d+\.\d+[KM]iB at +",
+            r"(?P<sp>\d+\.\d+[KM])iB\/s"))),
+        "stage": re.compile(r"^\[download\] Destination:")
     }
 
     def __init__(self, video_id, slow_count=30, restart_count=10):
@@ -75,16 +75,6 @@ class YtdlSubprocessRunner:
 
     # ---- Private methods ----
 
-    def _store_data(self, video_id):
-        self._id = video_id
-        self._stage = "start"
-        self.data = {
-            "id": video_id,
-            "progress": 0,
-            "restart_count": 0,
-            "slow_count": 0
-        }
-
     def _build_cmd(self):
         return (
             "yt-dlp",
@@ -96,6 +86,17 @@ class YtdlSubprocessRunner:
             "--output",
             self._opt.get("output"),
             f"https://www.youtube.com/watch?v={self._id}")
+
+    def _check_line_stderr(self, stderr):
+        while (l := stderr.readline()):
+            line = l.decode("utf-8").strip()
+            #=> DEBUG
+            # t = f"\n{' ' * 7}".join(("STDERR:", line))
+            # Message(t, form="warn")
+            #<=
+            if line.endswith("HTTP Error 403: Forbidden"):
+                self._restart(cause="403")
+                continue
 
     def _check_line_stdout(self, stdout, time_start):
         while (l := stdout.readline()):
@@ -124,17 +125,6 @@ class YtdlSubprocessRunner:
                 if (s := data.get("sp", None)) is not None:
                     self._check_speed(s)
 
-    def _check_line_stderr(self, stderr):
-        while (l := stderr.readline()):
-            line = l.decode("utf-8").strip()
-            #=> DEBUG
-            # t = f"\n{' ' * 7}".join(("STDERR:", line))
-            # Message(t, form="warn")
-            #<=
-            if line.endswith("HTTP Error 403: Forbidden"):
-                self._restart(cause="403")
-                continue
-
     def _check_percentage(self, percentage, time_start):
         pc = int(percentage.split(".")[0])
         if pc >= (p := self.data.get("progress") + 20):
@@ -155,6 +145,26 @@ class YtdlSubprocessRunner:
         else:
             update_value = 0
         self.data.update({ "slow_count": update_value })
+
+    def _join_threads(self):
+        self._stdout_thread.join()
+        self._stderr_thread.join()
+
+    def _new_process(self):
+        self._proc = subprocess.Popen(
+            self._build_cmd(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        self._stdout_thread = threading.Thread(
+            target=self._check_line_stdout,
+            args=(self._proc.stdout, self._time_start),
+            daemon=True)
+        self._stderr_thread = threading.Thread(
+            target=self._check_line_stderr,
+            args=(self._proc.stderr,),
+            daemon=True)
+        self._stdout_thread.start()
+        self._stderr_thread.start()
 
     def _restart(self, cause="slow"):
         self._proc.kill()
@@ -177,31 +187,21 @@ class YtdlSubprocessRunner:
             Message(t, form="warn").print()
         self.data.update({ "restart_count": rsc, "slow_count": 0 })
 
-    def _new_process(self):
-        self._proc = subprocess.Popen(
-            self._build_cmd(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE)
-        self._stdout_thread = threading.Thread(
-            target=self._check_line_stdout,
-            args=(self._proc.stdout, self._time_start),
-            daemon=True)
-        self._stderr_thread = threading.Thread(
-            target=self._check_line_stderr,
-            args=(self._proc.stderr,),
-            daemon=True)
-        self._stdout_thread.start()
-        self._stderr_thread.start()
+    def _store_data(self, video_id):
+        self._id = video_id
+        self._stage = "start"
+        self.data = {
+            "id": video_id,
+            "progress": 0,
+            "restart_count": 0,
+            "slow_count": 0
+        }
 
     def _wait(self):
         self._proc.wait()
         self._join_threads()
         if self._proc.returncode == 0:
             self._restart = False
-
-    def _join_threads(self):
-        self._stdout_thread.join()
-        self._stderr_thread.join()
 
 
 # Operations
