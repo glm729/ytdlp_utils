@@ -53,6 +53,13 @@ class YtdlSubprocessRunner:
     # ---- Public methods
 
     def run(self):
+        """Public runner method to attempt to download the given video
+
+        Initialises message queue and thread, and runs a new process until the
+        download is complete or until the restart limit is reached.  Provides
+        notification of success or failure, and closes the message queue and
+        thread at end.
+        """
         self._init_mq()
         self._message("Starting download", "ok")
         self._time_start = time.time()
@@ -72,6 +79,13 @@ class YtdlSubprocessRunner:
     # ---- Private methods ----
 
     def _build_cmd(self):
+        """Return the command for running yt-dlp
+
+        Tuple of strings, in a specified format, and with specific options for
+        yt-dlp (e.g. `--newline`).
+
+        @return Tuple of strings, to pass to `subprocess.Popen`
+        """
         return (
             "yt-dlp",
             "--force-ipv4",
@@ -84,6 +98,14 @@ class YtdlSubprocessRunner:
             f"https://www.youtube.com/watch?v={self._id}")
 
     def _check_line_stderr(self, stderr):
+        """Thread function to check stderr in-process
+
+        Currently mostly a dummy, but will perhaps attempt to restart if
+        receiving a 403.  Upon implementing this, no more 403s were received,
+        so it is currently untested.
+
+        @param stderr Stderr of the opened subprocess
+        """
         while (l := stderr.readline()):
             line = l.decode("utf-8").strip()
             #=> DEBUG
@@ -94,6 +116,19 @@ class YtdlSubprocessRunner:
                 self._restart(cause=0x0403)
 
     def _check_line_stdout(self, stdout, time_start):
+        """Thread function to check stdout in-process
+
+        A bit complex, and perhaps should be broken up a little.  Uses regex
+        parsing to check the current stage of the download / subprocess call.
+        Hierarchically checks if merging, changing stage, or downloading.
+        Provides messages when merging or changing stage, and passes progress
+        information to `_check_percentage` and `_check_speed` for further
+        checks and messages.
+
+        @param stdout Stdout of the opened subprocess
+        @param time_start Start time of the subprocess, for more interesting
+        messages.
+        """
         while (l := stdout.readline()):
             line = l.decode("utf-8").strip()
             check_merging = self._rex["merging"].search(line)
@@ -120,6 +155,16 @@ class YtdlSubprocessRunner:
                     self._check_speed(s)
 
     def _check_percentage(self, percentage, time_start):
+        """Check progress of the current download
+
+        Currently provides messages in 20-percent increments, for both video
+        and audio stages.  Updates the stored progress before providing a
+        message.
+
+        @param percentage String capture for current download percentage.
+        @param time_start Start time of the download, for more interesting /
+        informative messages.
+        """
         pc = int(percentage.split(".")[0])
         if pc >= (p := self.data.get("progress") + 20):
             self.data.update({ "progress": p })
@@ -129,21 +174,40 @@ class YtdlSubprocessRunner:
             self._message(t, "info")
 
     def _check_speed(self, speed):
+        """Check the speed of the current download
+
+        If downloading at KiB/s, increment the slow count.  If exceeding the
+        maximum slow count, restart the download from the current point.  If
+        downloading at MiB/s, reset the slow count.
+
+        Fragile in the sense that sometimes there can be a rapid burst of
+        low-speed (KiB/s) stdout lines before lifting up to MiB/s, and
+        sometimes stdout can just hang.
+        TODO: Implement a timer for checking last update time of stdout.
+
+        @param speed String capture for current download speed.
+        """
+        update_value = 0
         if speed.endswith("K"):
             update_value = self.data.get("slow_count") + 1
             if update_value > self.slow_count:
-                self._restart(cause="slow")
+                self._restart(cause=0x2510)
                 return
-        else:
-            update_value = 0
         self.data.update({ "slow_count": update_value })
 
     def _close_mq(self):
+        """Join the message queue and message thread"""
         self._running = False
         self._q_msg.join()
         self._t_msg.join()
 
     def _fun_t_msg(self):
+        """Message queue thread function
+
+        Times out at 0.2s and begins again if no message.  Timeout is used to
+        reduce the thread's processor load.  Relies on the `_running` attr to
+        stop the loop.
+        """
         while self._running:
             try:
                 task = self._q_msg.get(timeout=0.2)
@@ -153,9 +217,15 @@ class YtdlSubprocessRunner:
                 pass
 
     def _get_stage(self):
+        """Get the current stored stage of the download"""
         return self.data.get("stage")
 
     def _init_mq(self):
+        """Initialise the message queue and message thread
+
+        Initialises recursive lock, message queue, and message thread.  Starts
+        the message thread immediately.
+        """
         self._running = True
         self._lock = threading.RLock()
         self._q_msg = queue.Queue()
@@ -165,10 +235,18 @@ class YtdlSubprocessRunner:
         self._t_msg.start()
 
     def _join_threads(self):
+        """Join the stdout- and stderr-check threads"""
         self._stdout_thread.join()
         self._stderr_thread.join()
 
     def _message(self, t, f):
+        """Put a message on the message queue
+
+        Uses my Message class, so needs both text and message form.
+
+        @param t Message text.
+        @param f Message form.
+        """
         self._lock.acquire()
         try:
             self._q_msg.put((f"{self._id}: {t}", f))
@@ -176,6 +254,11 @@ class YtdlSubprocessRunner:
             self._lock.release()
 
     def _new_process(self):
+        """Start a new subprocess
+
+        Also initialises and starts stdout- and stderr-check threads.  Uses
+        `_build_cmd` to provide the args to `subprocess.Popen`.
+        """
         self._proc = subprocess.Popen(
             self._build_cmd(),
             stdout=subprocess.PIPE,
@@ -192,6 +275,12 @@ class YtdlSubprocessRunner:
         self._stderr_thread.start()
 
     def _print(self, m):
+        """Print a message to stdout
+
+        Uses a recursive lock to avoid smashing messages together.
+
+        @param m Message to print, of class Message (my own class).
+        """
         self._lock.acquire()
         try:
             m.print()
@@ -199,6 +288,16 @@ class YtdlSubprocessRunner:
             self._lock.release()
 
     def _restart(self, cause=0x2510):
+        """Kill and restart the subprocess
+
+        Kills the process and checks the restart count.  If exceeding the max.
+        number of restarts, switches `_ok` and `_restart`and returns.
+        Otherwise, provides a warning to the user, depending on reason for
+        restart.
+
+        @param cause Internal code representing the cause of the restart, to
+        provide more meaningful warnings.
+        """
         self._proc.kill()
         rsc = self.data.get("restart_count") + 1
         if rsc > self.restart_count:
@@ -219,9 +318,23 @@ class YtdlSubprocessRunner:
         self.data.update({ "restart_count": rsc, "slow_count": 0 })
 
     def _set_stage(self, stage):
+        """Update the stage of the download
+
+        A bit informal.  Could probably be improved.
+
+        @param stage String representing download stage, for use in checks and
+        messages.
+        """
         self.data.update({ "stage": stage })
 
     def _store_data(self, video_id):
+        """Initialise data store
+
+        Stores video ID, and initialises a more general data hash, containing
+        progress, restart count, slow count, and download stage.
+
+        @param video_id ID of the video to download.
+        """
         self._id = video_id
         self.data = {
             "id": video_id,
@@ -232,6 +345,11 @@ class YtdlSubprocessRunner:
         }
 
     def _wait(self):
+        """Wait for the process to end
+
+        Joins stdout and stderr threads.  Checks exit status, and stops the
+        operations loop if the download and merge was successful.
+        """
         self._proc.wait()
         self._join_threads()
         if self._proc.returncode == 0:
