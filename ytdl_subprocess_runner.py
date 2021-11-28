@@ -91,8 +91,7 @@ class YtdlSubprocessRunner:
             # self._message(t, "warn")
             #<=
             if line.endswith("HTTP Error 403: Forbidden"):
-                self._restart(cause="403")
-                continue
+                self._restart(cause=0x0403)
 
     def _check_line_stdout(self, stdout, time_start):
         while (l := stdout.readline()):
@@ -101,14 +100,15 @@ class YtdlSubprocessRunner:
             check_stage = self._rex["stage"].search(line)
             check_progress = self._rex["progress"].search(line)
             if check_merging is not None:
+                self._set_stage("merging")  # DEBUG
                 self._message("Merging data", "info")
                 continue
             if check_stage is not None:
-                if self._stage == "start":
-                    self._stage = "Video"
+                if self._get_stage() is None:
+                    self._set_stage("Video")
                     self._message("Downloading video", "info")
-                elif self._stage == "Video":
-                    self._stage = "Audio"
+                elif self._get_stage() == "Video":
+                    self._set_stage("Audio")
                     self.data.update({ "progress": 0 })
                     self._message("Downloading audio", "info")
                 continue
@@ -125,7 +125,7 @@ class YtdlSubprocessRunner:
             self.data.update({ "progress": p })
             tn = time.time() - time_start
             w = " " * (4 - len(str(p)))
-            t = f"{self._stage} download reached {p}%{w}({tn:.1f}s)"
+            t = f"{self._get_stage()} download reached {p}%{w}({tn:.1f}s)"
             self._message(t, "info")
 
     def _check_speed(self, speed):
@@ -152,6 +152,9 @@ class YtdlSubprocessRunner:
             except queue.Empty:
                 pass
 
+    def _get_stage(self):
+        return self.data.get("stage")
+
     def _init_mq(self):
         self._running = True
         self._lock = threading.RLock()
@@ -173,7 +176,6 @@ class YtdlSubprocessRunner:
             self._lock.release()
 
     def _new_process(self):
-        self._stage = "start"
         self._proc = subprocess.Popen(
             self._build_cmd(),
             stdout=subprocess.PIPE,
@@ -196,7 +198,7 @@ class YtdlSubprocessRunner:
         finally:
             self._lock.release()
 
-    def _restart(self, cause="slow"):
+    def _restart(self, cause=0x2510):
         self._proc.kill()
         rsc = self.data.get("restart_count") + 1
         if rsc > self.restart_count:
@@ -204,17 +206,20 @@ class YtdlSubprocessRunner:
             self._restart = False
             self._message("Restart limit reached", "warn")
             return
-        if cause == "slow":
+        if cause == 0x2510:
             t = " ".join((
                 "Reached slow speed limit, restarting",
                 f"(remaining: {self.restart_count - rsc})"))
             self._message(t, "warn")
-        elif cause == "403":
+        elif cause == 0x0403:
             t = " ".join((
                 f"Received HTTP Error 403, restarting",
                 f"(remaining: {self.restart_count - rsc})"))
             self._message(t, "warn")
         self.data.update({ "restart_count": rsc, "slow_count": 0 })
+
+    def _set_stage(self, stage):
+        self.data.update({ "stage": stage })
 
     def _store_data(self, video_id):
         self._id = video_id
@@ -222,7 +227,8 @@ class YtdlSubprocessRunner:
             "id": video_id,
             "progress": 0,
             "restart_count": 0,
-            "slow_count": 0
+            "slow_count": 0,
+            "stage": None,
         }
 
     def _wait(self):
