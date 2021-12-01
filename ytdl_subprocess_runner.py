@@ -160,18 +160,21 @@ class YtdlSubprocessRunner:
 
         Currently provides messages in 20-percent increments, for both video
         and audio stages.  Updates the stored progress before providing a
-        message.
+        message.  Modified to get the percentage in chunks of 20 regardless of
+        gradual incrementation, due to tiny downloads not reaching a message
+        for 100% before merging.
 
         @param percentage String capture for current download percentage.
         @param time_start Start time of the download, for more interesting /
         informative messages.
         """
         pc = int(percentage.split(".")[0])
-        if pc >= (p := self.data.get("progress") + 20):
-            self.data.update({ "progress": p })
+        rpc = pc - (pc % 20)
+        if rpc >= (self.data.get("progress") + 20):
+            self.data.update({ "progress": rpc })
             tn = time.time() - time_start
-            w = " " * (4 - len(str(p)))
-            t = f"{self._get_stage()} download reached {p}%{w}({tn:.1f}s)"
+            w = " " * (4 - len(str(rpc)))
+            t = f"{self._get_stage()} download reached {rpc}%{w}({tn:.1f}s)"
             self._message(t, "info")
 
     def _check_speed(self, speed):
