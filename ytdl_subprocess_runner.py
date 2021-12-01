@@ -24,6 +24,8 @@ class YtdlSubprocessRunner:
 
     _restart = True
 
+    _stage = 0
+
     _opt = {
         "format": "/".join((
             "298+bestaudio",
@@ -135,17 +137,16 @@ class YtdlSubprocessRunner:
             check_stage = self._rex["stage"].search(line)
             check_progress = self._rex["progress"].search(line)
             if check_merging is not None:
-                self._set_stage("merging")  # DEBUG
+                self._increment_stage()
                 self._message("Merging data", "info")
                 continue
             if check_stage is not None:
-                if self._get_stage() is None:
-                    self._set_stage("Video")
+                if self._stage == 0:
                     self._message("Downloading video", "info")
-                elif self._get_stage() == "Video":
-                    self._set_stage("Audio")
-                    self.data.update({ "progress": 0 })
+                elif self._stage == 1:
                     self._message("Downloading audio", "info")
+                    self.data.update({ "progress": 0 })
+                self._increment_stage()
                 continue
             if check_progress is not None:
                 data = check_progress.groupdict()
@@ -201,6 +202,16 @@ class YtdlSubprocessRunner:
         self._q_msg.join()
         self._t_msg.join()
 
+    def _decrement_stage(self):
+        """Decrement the stage flag
+
+        Throws a RuntimeError if `_stage` is 0 (or somehow less), for debug.
+        """
+        if self._stage > 0:
+            self._stage -= 1
+            return
+        raise RuntimeError(f"DEBUG: {self._stage}")
+
     def _fun_t_msg(self):
         """Message queue thread function
 
@@ -217,8 +228,19 @@ class YtdlSubprocessRunner:
                 pass
 
     def _get_stage(self):
-        """Get the current stored stage of the download"""
-        return self.data.get("stage")
+        """Get the text for the current stored stage of the download
+
+        Altered to use numeric stage flag.
+        """
+        if self._stage == 1:
+            return "Video"
+        if self._stage == 2:
+            return "Audio"
+        raise RuntimeError(f"DEBUG: {self._stage}")
+
+    def _increment_stage(self):
+        """Increment the stage flag"""
+        self._stage += 1
 
     def _init_mq(self):
         """Initialise the message queue and message thread
@@ -316,22 +338,13 @@ class YtdlSubprocessRunner:
                 f"(remaining: {self.restart_count - rsc})"))
             self._message(t, "warn")
         self.data.update({ "restart_count": rsc, "slow_count": 0 })
-
-    def _set_stage(self, stage):
-        """Update the stage of the download
-
-        A bit informal.  Could probably be improved.
-
-        @param stage String representing download stage, for use in checks and
-        messages.
-        """
-        self.data.update({ "stage": stage })
+        self._decrement_stage()
 
     def _store_data(self, video_id):
         """Initialise data store
 
         Stores video ID, and initialises a more general data hash, containing
-        progress, restart count, slow count, and download stage.
+        progress, restart count, and slow count.
 
         @param video_id ID of the video to download.
         """
@@ -341,7 +354,6 @@ class YtdlSubprocessRunner:
             "progress": 0,
             "restart_count": 0,
             "slow_count": 0,
-            "stage": None,
         }
 
     def _wait(self):
