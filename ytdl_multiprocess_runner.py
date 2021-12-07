@@ -27,9 +27,15 @@ class YtdlMultiprocessRunner:
 
     # ---- Public methods
 
-    def read_file(self, path):
+    def read_file(self, path: str) -> None:
+        """Read and parse a text file containing video links
+
+        Currently assumes text format only.
+
+        @param path File path for the file to read and parse.
+        """
         data = YtdlTextLinkParser(path=path)
-        if len((v := data.video_ids)) > 0:
+        if len(v := data.video_ids) > 0:
             s = '' if len(v) == 1 else "s"
             t = f"Found {len(v)} video ID{s}"
             Message(t, form="ok").print()
@@ -37,7 +43,13 @@ class YtdlMultiprocessRunner:
             return
         raise RuntimeError("No video IDs found")
 
-    def run(self):
+    def run(self) -> None:
+        """Run all video downloads
+
+        Records time to complete operations for more interesting messages.
+        Enqueues all tasks, generates and starts all processes, and joins the
+        job queue.
+        """
         time_start = time.time()
         for video_id in self.video_ids:
             self.q.put(video_id)
@@ -57,7 +69,8 @@ class YtdlMultiprocessRunner:
 
     # ---- Private methods
 
-    def _target(self):
+    def _target(self) -> None:
+        """Multiprocessing operations target function"""
         while True:
             if self.q.empty():
                 return
@@ -66,11 +79,11 @@ class YtdlMultiprocessRunner:
             sp_runner.run()
             self.q.task_done()
 
-    def _run(self, video_id):
-        sp_runner = YtdlSubprocessRunner(video_id)
-        sp_runner.run()
+    def _set_ncore(self, ncore: int) -> None:
+        """Set the number of CPU cores to use for operations
 
-    def _set_ncore(self, ncore):
+        @param ncore Maximum number of cores to use, if wanting to restrict.
+        """
         nc = multiprocessing.cpu_count() - 2
         if nc < 1:
             self._ncore = 1
