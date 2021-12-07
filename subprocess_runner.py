@@ -18,7 +18,7 @@ from _modules.message import Message
 # -----------------------------------------------------------------------------
 
 
-class YtdlSubprocessRunner:
+class SubprocessRunner:
 
     _ok = True
 
@@ -377,5 +377,5 @@ class YtdlSubprocessRunner:
 
 if __name__ == "__main__":
     import sys
-    sp_runner = YtdlSubprocessRunner(sys.argv[1])
+    sp_runner = SubprocessRunner(sys.argv[1])
     sp_runner.run()
