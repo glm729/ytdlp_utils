@@ -14,7 +14,7 @@ from _modules.message import Message
 # -----------------------------------------------------------------------------
 
 
-class YtdlTextLinkParser:
+class TextLinkParser:
 
     _rex = {
         "normal": re.compile(r"(?<=[\?&]v=)(?P<id>[^\?&]+)"),
