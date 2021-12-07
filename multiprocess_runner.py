@@ -9,15 +9,15 @@ import multiprocessing
 import time
 
 from _modules.message import Message
-from ytdl_text_link_parser import YtdlTextLinkParser
-from ytdl_subprocess_runner import YtdlSubprocessRunner
+from text_link_parser import TextLinkParser
+from subprocess_runner import SubprocessRunner
 
 
 # Class definition
 # -----------------------------------------------------------------------------
 
 
-class YtdlMultiprocessRunner:
+class MultiprocessRunner:
 
     def __init__(self, path=None, ncore=None):
         self.q = multiprocessing.JoinableQueue()
@@ -34,7 +34,7 @@ class YtdlMultiprocessRunner:
 
         @param path File path for the file to read and parse.
         """
-        data = YtdlTextLinkParser(path=path)
+        data = TextLinkParser(path=path)
         if len(v := data.video_ids) > 0:
             s = '' if len(v) == 1 else "s"
             t = f"Found {len(v)} video ID{s}"
@@ -75,7 +75,7 @@ class YtdlMultiprocessRunner:
             if self.q.empty():
                 return
             video_id = self.q.get()
-            sp_runner = YtdlSubprocessRunner(video_id)
+            sp_runner = SubprocessRunner(video_id)
             sp_runner.run()
             self.q.task_done()
 
@@ -105,5 +105,5 @@ class YtdlMultiprocessRunner:
 
 if __name__ == "__main__":
     import sys
-    runner = YtdlMultiprocessRunner(sys.argv[1])
+    runner = MultiprocessRunner(sys.argv[1])
     runner.run()
