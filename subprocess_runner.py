@@ -38,13 +38,11 @@ class SubprocessRunner:
     }
 
     _rex = {
-        "merging": re.compile(r"^\[Merger\] Merging formats into"),
         "progress": re.compile(''.join((
             r"^\[download\] +",
             r"(?P<pc>\d+\.\d)%",
             r" of \d+\.\d+[KM]iB at +",
             r"(?P<sp>\d+\.\d+[KM])iB\/s"))),
-        "stage": re.compile(r"^\[download\] Destination:")
     }
 
     def __init__(self, video_id, slow_count=30, restart_count=10):
@@ -133,14 +131,13 @@ class SubprocessRunner:
         """
         while (l := stdout.readline()):
             line = l.decode("utf-8").strip()
-            check_merging = self._rex["merging"].search(line)
-            check_stage = self._rex["stage"].search(line)
-            check_progress = self._rex["progress"].search(line)
-            if check_merging is not None:
+            # Check if the download is at the merging stage
+            if line.startswith("[Merger] Merging formats into"):
                 self._increment_stage()
                 self._message("Merging data", "info")
                 continue
-            if check_stage is not None:
+            # Check if the download has progressed to the next stage
+            if line.startswith("[download] Destination:"):
                 if self._stage == 0:
                     self._message("Downloading video", "info")
                 elif self._stage == 1:
@@ -148,8 +145,9 @@ class SubprocessRunner:
                     self.data.update({ "progress": 0 })
                 self._increment_stage()
                 continue
-            if check_progress is not None:
-                data = check_progress.groupdict()
+            # Check progress of the download
+            if (cp := self._rex["progress"].search(line)) is not None:
+                data = cp.groupdict()
                 if (p := data.get("pc", None)) is not None:
                     self._check_percentage(p, time_start)
                 if (s := data.get("sp", None)) is not None:
