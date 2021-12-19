@@ -6,7 +6,6 @@
 
 
 import re
-import yaml
 
 from _modules.message import Message
 
@@ -15,7 +14,7 @@ from _modules.message import Message
 # -----------------------------------------------------------------------------
 
 
-class YtdlYamlLinkParser:
+class TextLinkParser:
 
     _rex = {
         "normal": re.compile(r"(?<=[\?&]v=)(?P<id>[^\?&]+)"),
@@ -24,20 +23,20 @@ class YtdlYamlLinkParser:
 
     def __init__(self, path=None):
         if path is not None:
-            self.read_yaml(path)
+            self.read_file(path)
 
     # ---- Public methods ----
 
-    def read_yaml(self, path):
+    def read_file(self, path) -> None:
+        """Attempt to read the video links file
+
+        @param path File path to read and parse.
+        """
         try:
             with open(path, "r") as fh:
-                self.data = self._store_data(yaml.safe_load(fh.read()))
+                self.data = self._store_data(fh.read().strip().split())
         except FileNotFoundError as error:
             t = f"File does not exist:  {path}"
-            Message(t, form="exit").print()
-            raise error
-        except yaml.YAMLError as error:
-            t = f"Failed to parse YAML:  {path}"
             Message(t, form="exit").print()
             raise error
         except (AttributeError, RuntimeError) as error:
@@ -47,27 +46,44 @@ class YtdlYamlLinkParser:
 
     # ---- Private methods ----
 
-    def _store_data(self, data):
+    def _store_data(self, data) -> None:
+        """Parse the split text data and store in the instance
+
+        Permits comments for lines starting with a hash or double-slash.
+        """
         malformed = 0
         video_ids = []
-        for (_, value) in data.items():
-            if not isinstance(value, list):
-                raise RuntimeError("Unexpected input data format")
-            for link in value:
-                if (i := self._check_link(link)) is not None:
-                    video_ids.append(i)
-                    continue
-                malformed += 1
+        for value in data:
+            # Ignore empty lines and comments
+            if value == '':
+                continue
+            if value.startswith("#") or value.startswith("//"):
+                continue
+            # If a link is found by regex search, append
+            if (i := self._check_link(value)) is not None:
+                video_ids.append(i)
+                continue
+            # Increment malformed link text
+            malformed += 1
+        # Warn if at least one malformed link
         if malformed > 0:
             s = '' if malformed == 1 else "s"
             t = f"{malformed} link{s} could not be identified"
             Message(t, form="warn").print()
+        # Warn if no links found
         if len(video_ids) == 0:
             t = "No links found!"
             Message(t, form="warn").print()
         self.video_ids = video_ids
 
-    def _check_link(self, link):
+    def _check_link(self, link) -> str:
+        """Check the given text for a link
+
+        Checks normal format or short format (youtu.be).
+
+        @param link Link text to search within.
+        @return Video ID found, or None if nothing found.
+        """
         if (r := self._rex.get("normal").search(link)) is not None:
             return r.group("id")
         if (r := self._rex.get("short").search(link)) is not None:
