@@ -20,7 +20,7 @@ from subprocess_runner import SubprocessRunner
 class MultiprocessRunner:
 
     def __init__(self, path=None, ncore=None):
-        self.q = multiprocessing.JoinableQueue()
+        self.q_task = multiprocessing.JoinableQueue()
         self._set_ncore(ncore)
         if path is not None:
             self.read_file(path)  # Assuming text for now
@@ -52,16 +52,18 @@ class MultiprocessRunner:
         """
         time_start = time.time()
         for video_id in self.video_ids:
-            self.q.put(video_id)
+            self.q_task.put(video_id)
         _procs = []
         for _ in range(0, self._ncore):
-            p = multiprocessing.Process(target=self._target, daemon=True)
-            _procs.append(p)
+            _procs.append(
+                multiprocessing.Process(
+                    target=self._target_process,
+                    daemon=True))
         for p in _procs:
             p.start()
         for p in _procs:
             p.join()
-        self.q.join()
+        self.q_task.join()
         time_end = time.time() - time_start
         s = '' if len(self.video_ids) == 1 else "s"
         t = f"Video{s} downloaded in {time_end:.1f}s"
@@ -69,15 +71,15 @@ class MultiprocessRunner:
 
     # ---- Private methods
 
-    def _target(self) -> None:
+    def _target_process(self) -> None:
         """Multiprocessing operations target function"""
         while True:
-            if self.q.empty():
+            if self.q_task.empty():
                 return
-            video_id = self.q.get()
+            video_id = self.q_task.get()
             sp_runner = SubprocessRunner(video_id)
             sp_runner.run()
-            self.q.task_done()
+            self.q_task.task_done()
 
     def _set_ncore(self, ncore: int) -> None:
         """Set the number of CPU cores to use for operations
