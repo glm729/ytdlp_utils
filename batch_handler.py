@@ -24,12 +24,15 @@ class BatchHandler:
     # ---- Public methods
 
     def read_video_links(self, path: str) -> None:
+        """Read the video links text file and store the data
+
+        @param path Path to the video links text file.
+        """
         data = TextLinkParser(path=path)
         if (l := len(v := data.video_ids)) > 0:
             self._s = '' if l == 1 else "s"
             self._message(f"Found {l} video ID{self._s}", "ok")
-            self.video_data = v
-            # self._store_video_data(v)
+            self._store_video_data(v)
             return
         raise RuntimeError("No video IDs found")
 
@@ -42,7 +45,7 @@ class BatchHandler:
         """
         time_start = time.time()
         for v in self.video_data:
-            SubprocessRunner(v).run()
+            SubprocessRunner(**v).run()
         time_end = time.time() - time_start
         self._message(f"Video{self._s} downloaded in {time_end:.1f}s", "ok")
 
@@ -67,8 +70,8 @@ class BatchHandler:
         self.video_data = []
         for vid in video_ids:
             self.video_data.append({
-                "id": vid,
-                "print_prefix": f"\033[1;{colour_index}m{vid}\033[0m"
+                "video_id": vid,
+                "colour_index": colour_index
             })
             if colour_index == 37:
                 colour_index -= 7
