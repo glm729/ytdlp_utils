@@ -45,8 +45,13 @@ class SubprocessRunner:
             r"(?P<sp>\d+\.\d+[KM])iB\/s"))),
     }
 
-    def __init__(self, video_id, slow_count=30, restart_count=10):
-        self._store_data(video_id)
+    def __init__(
+            self,
+            video_id,
+            colour_index=37,
+            slow_count=30,
+            restart_count=10):
+        self._store_data(video_id, colour_index)
         self.slow_count = slow_count
         self.restart_count = restart_count
 
@@ -222,8 +227,7 @@ class SubprocessRunner:
         """
         while self._running:
             try:
-                task = self._q_msg.get(timeout=0.2)
-                self._print(Message(task[0], form=task[1]))
+                self._print(self._q_msg.get(timeout=0.2))
                 self._q_msg.task_done()
             except queue.Empty:
                 pass
@@ -252,9 +256,7 @@ class SubprocessRunner:
         self._running = True
         self._lock = threading.RLock()
         self._q_msg = queue.Queue()
-        self._t_msg = threading.Thread(
-            target=self._fun_t_msg,
-            daemon=True)
+        self._t_msg = threading.Thread(target=self._fun_t_msg, daemon=True)
         self._t_msg.start()
 
     def _join_threads(self):
@@ -270,9 +272,10 @@ class SubprocessRunner:
         @param t Message text.
         @param f Message form.
         """
+        _t = f"\033[1;{self._colour_index}m{self._id}\033[0m: {t}"
         self._lock.acquire()
         try:
-            self._q_msg.put((f"{self._id}: {t}", f))
+            self._q_msg.put(Message(_t, form=f))
         finally:
             self._lock.release()
 
@@ -341,15 +344,17 @@ class SubprocessRunner:
         self.data.update({ "restart_count": rsc, "slow_count": 0 })
         self._decrement_stage()
 
-    def _store_data(self, video_id):
+    def _store_data(self, video_id: str, colour_index: int) -> None:
         """Initialise data store
 
         Stores video ID, and initialises a more general data hash, containing
         progress, restart count, and slow count.
 
         @param video_id ID of the video to download.
+        @param colour_index Index of the shell escape code for print colouring.
         """
         self._id = video_id
+        self._colour_index = str(colour_index)
         self.data = {
             "id": video_id,
             "progress": 0,
