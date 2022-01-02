@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 
-from _modules.message import Message
+from message import Message
 
 
 # Class definition

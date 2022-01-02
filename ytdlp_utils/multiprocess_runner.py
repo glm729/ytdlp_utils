@@ -8,9 +8,9 @@
 import multiprocessing
 import time
 
-from _modules.message import Message
-from text_link_parser import TextLinkParser
+from message import Message
 from subprocess_runner import SubprocessRunner
+from text_link_parser import TextLinkParser
 
 
 # Class definition
@@ -35,11 +35,11 @@ class MultiprocessRunner:
         @param path File path for the file to read and parse.
         """
         data = TextLinkParser(path=path)
-        if len(v := data.video_ids) > 0:
-            s = '' if len(v) == 1 else "s"
-            t = f"Found {len(v)} video ID{s}"
+        if (l := len(v := data.video_ids)) > 0:
+            s = '' if l == 1 else "s"
+            t = f"Found {l} video ID{s}"
             Message(t, form="ok").print()
-            self.video_ids = v
+            self._store_video_data(v)
             return
         raise RuntimeError("No video IDs found")
 
@@ -51,8 +51,8 @@ class MultiprocessRunner:
         job queue.
         """
         time_start = time.time()
-        for video_id in self.video_ids:
-            self.q_task.put(video_id)
+        for v in self.video_data:
+            self.q_task.put(v)
         _procs = []
         for _ in range(0, self._ncore):
             _procs.append(
@@ -65,7 +65,7 @@ class MultiprocessRunner:
             p.join()
         self.q_task.join()
         time_end = time.time() - time_start
-        s = '' if len(self.video_ids) == 1 else "s"
+        s = '' if len(self.video_data) == 1 else "s"
         t = f"Video{s} downloaded in {time_end:.1f}s"
         Message(t, form="ok").print()
 
@@ -76,8 +76,8 @@ class MultiprocessRunner:
         while True:
             if self.q_task.empty():
                 return
-            video_id = self.q_task.get()
-            sp_runner = SubprocessRunner(video_id)
+            video_data = self.q_task.get()
+            sp_runner = SubprocessRunner(**video_data)
             sp_runner.run()
             self.q_task.task_done()
 
@@ -99,6 +99,25 @@ class MultiprocessRunner:
                 f"limiting to {nc}"))
             Message(t, form="warn").print()
         self._ncore = nc
+
+    def _store_video_data(self, video_ids) -> None:
+        """Store the video ID data in the instance
+
+        Provides colouring for the video ID prefix.
+
+        @param video_ids Array of video IDs to store.
+        """
+        colour_index = 30
+        self.video_data = []
+        for vid in video_ids:
+            self.video_data.append({
+                "video_id": vid,
+                "colour_index": colour_index
+            })
+            if colour_index == 37:
+                colour_index -= 7
+                continue
+            colour_index += 1
 
 
 # Operations
