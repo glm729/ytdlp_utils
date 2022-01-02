@@ -8,9 +8,9 @@
 import multiprocessing
 import time
 
-from _modules.message import Message
-from text_link_parser import TextLinkParser
+from message import Message
 from subprocess_runner import SubprocessRunner
+from text_link_parser import TextLinkParser
 
 
 # Class definition
