@@ -32,7 +32,7 @@ class Playlist:
         """
         self.index = index
         self.index_str = str(index)
-        self.index_padded = self.index_str.rjust(self.length, " ")
+        self.index_padded = self.index_str.rjust(len(str(self.length)), " ")
 
 
 class Video:
@@ -52,14 +52,47 @@ class Video:
         self.restart_count = restart_count
         self.time_start = time_start
         self.time_end = None
+        self._guard = False
 
-    def get_stage(self):
+    # ---- Public methods
+
+    def decrement_stage(self):
+        """Decrement the video stage
+
+        Does not check for a guard when decrementing.
+        """
+        self.stage -= 1
+
+    def get_stage_text(self):
         """Return appropriate text for the current video download stage"""
         if self.stage == 1:
             return "Video"
         if self.stage == 2:
             return "Audio"
         return "Unknown"
+
+    def guard(self):
+        """Set the guard"""
+        self._guard = True
+
+    def increment_stage(self):
+        """Increment the video stage
+
+        Checks for a guard, and removes the guard if present, instead of
+        incrementing the stage.
+        """
+        if self._guard:
+            self._guard = False
+            return
+        self.stage += 1
+
+    def is_guarded(self):
+        """Return the guarded state of the video"""
+        return self._guard
+
+    def unguard(self):
+        """Unset the guard"""
+        self._guard = False
 
 
 # Handler class definition
@@ -70,7 +103,7 @@ class PlaylistHandler:
 
     # ---- Atomic-type instance vars
 
-    _colour_index = 29
+    _colour_index = 30
 
     _failed = []
 
@@ -127,11 +160,16 @@ class PlaylistHandler:
 
     # ---- Constructor
 
-    def __init__(self, playlist_id, slow_count=30, restart_count=10):
+    def __init__(
+            self,
+            playlist_id,
+            index_start=1,
+            slow_count=30,
+            restart_count=10):
         self._slow_count = slow_count
         self._restart_count = restart_count
         self._playlist = Playlist(playlist_id)
-        self._playlist.set_index(1)
+        self._playlist.set_index(index_start)
 
     # ---- Public methods
 
@@ -173,7 +211,7 @@ class PlaylistHandler:
             time_now = time.time() - self._current_video.time_start
             t = ''.join((
                 f"{self._message_prefix()}: ",
-                f"{self._current_video.get_stage()} download reached ",
+                f"{self._current_video.get_stage_text()} download reached ",
                 f"{str(rpc).rjust(3, ' ')}% ({time_now:.1f}s)"))
             self._message(t, "info")
 
@@ -232,44 +270,41 @@ class PlaylistHandler:
             # Check if the current video is at the merging stage
             if line.startswith(self._line_start.get("merging")):
                 t = f"{self._message_prefix()}: Merging data"
-                self._increment_video_stage()
+                self._current_video.increment_stage()
                 self._message(t, "info")
                 continue
             # Check if the current video has progressed to the next stage
             if line.startswith(self._line_start.get("stage")):
                 t = f"{self._message_prefix()}: Downloading"
-                stage = self._get_video_stage()
+                stage = self._current_video.stage
                 if stage == 0:
                     self._message(f"{t} video", "info")
                 elif stage == 1:
                     self._message(f"{t} audio", "info")
                     self._current_video.progress = 0
-                self._increment_video_stage()
+                self._current_video.increment_stage()
                 continue
             # Check the progress of the current video download
             if (cp := self._rex.get("progress").search(line)) is not None:
                 data = cp.groupdict()
                 if (percentage := data.get("pc", None)) is not None:
-                    self._check_percentage(
-                        percentage,
-                        self._current_video.time_start)
+                    self._check_percentage(percentage)
                 if (speed := data.get("sp", None)) is not None:
                     self._check_speed(speed)
                 continue
             # Check the video index in the playlist
             if (vi := self._rex.get("video_index").search(line)) is not None:
-                if self._playlist.index > 1:
-                    self._notify_video_downloaded()
-                data = vi.groupdict()
-                (i, n) = (data.get("i"), data.get("n"))
+                n = vi.groupdict().get("n")
                 if not self._playlist_length_set:
                     self._playlist.length = int(n)
+                    self._playlist.set_index(self._playlist.index)
                     self._playlist_length_set = True
-                self._playlist.set_index(int(i))
-                if self._colour_index == 37:
-                    self._colour_index = 30
-                else:
-                    self._colour_index += 1
+                if hasattr(self, "_current_video"):
+                    if self._current_video.is_guarded():
+                        self._current_video.unguard()
+                    else:
+                        self._notify_video_downloaded()
+                        self._increment_playlist_index()
                 t = f"Downloading video {self._playlist.index_padded} of {n}"
                 self._message(t, "info")
                 self._current_video = Video(time_start=time.time())
@@ -294,23 +329,20 @@ class PlaylistHandler:
             self._playlist.id)
 
     def _increment_playlist_index(self):
-        """Increment the playlist index
+        """Increment the playlist index, or cancel if video is guarded
 
-        End the instance loop if at the end of the playlist.
+        Unguard the video if guarded.  End the instance loop if at the end of
+        the playlist.
         """
         i = self._playlist.index
         if i == self._playlist.length:
             self._loop = False
             return
         self._playlist.set_index(i + 1)
-
-    def _increment_video_stage(self):
-        """Increment the recorded stage of the current video download"""
-        stage = self._current_video.stage
-        if stage >= 3:
-            self._message(f"Current stage is {stage}, ignoring increment call")
+        if self._colour_index >= 37:
+            self._colour_index = 30
             return
-        self._current_video.stage += 1
+        self._colour_index += 1
 
     def _init_message_handler(self):
         """Initialise the message handling components
@@ -344,7 +376,7 @@ class PlaylistHandler:
 
     def _message_prefix(self):
         """Generate a message prefix for the current video"""
-        return "\033[1;{c}m Video {i} / {l}\033[0m".format(
+        return "\033[1;{c}mVideo {i} / {l}\033[0m".format(
             c=self._colour_index,
             i=self._playlist.index_padded,
             l=self._playlist.length)
@@ -408,7 +440,17 @@ class PlaylistHandler:
             t = f"{self._message_prefix()}: Restart limit reached"
             self._message(t, "error")
             self._increment_playlist_index()
-            # TODO: Increment playlist index if less than playlist length
+            return
+        if cause == 0x0104:
+            e = "Connection reset, restarting at current index"
+        elif cause == 0x0110:
+            e = "Timeout, restarting at current index"
+        elif cause == 0x0403:
+            e = "Received HTTP error 403, restarting at current index"
+        elif cause == 0x2510:
+            e = "Reached slow speed limit, restarting"
+        self._message(f"{self._message_prefix()}: {e}", "warn")
+        self._current_video.guard()
 
     def _wait(self):
         """Wait for the instance process to end
