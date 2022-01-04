@@ -22,8 +22,31 @@ class Playlist:
 
     def __init__(self, playlist_id, index=1, length=1):
         self.id = playlist_id
-        self.index = index
         self.length = length
+        self.length_str = str(length)
+        self.set_index(index)
+
+    # ---- Public methods
+
+    def get_playlist_data(self):
+        """Request the data for the playlist
+
+        Primarily for the purpose of discovering and storing playlist length.
+        """
+        cmd = ("yt-dlp", "--flat-playlist", "--print", "id", self.id)
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        if proc.wait() == 0:
+            count = 0
+            while (l := proc.stdout.readline()):
+                count += 1
+            self.length = count
+            self.length_str = str(count)
+            self.set_index(self.index)
+        # TODO: Subprocess failure is currently unhandled!
+        # This gap may be adequately handled by the defaults.
 
     def set_index(self, index):
         """Set the current index for the playlist instance
@@ -32,7 +55,7 @@ class Playlist:
         """
         self.index = index
         self.index_str = str(index)
-        self.index_padded = self.index_str.rjust(len(str(self.length)), " ")
+        self.index_padded = self.index_str.rjust(len(self.length_str), " ")
 
 
 class Video:
@@ -105,13 +128,9 @@ class PlaylistHandler:
 
     _colour_index = 30
 
-    _failed = []
-
     _loop = True
 
     _ok = True
-
-    _playlist_length_set = False
 
     _waiting = True
 
@@ -125,6 +144,8 @@ class PlaylistHandler:
             "ERROR: unable to download video data: ",
             "<urlopen error [Errno 110] Connection timed out>"))
     }
+
+    _failed = []
 
     _line_start = {
         "end": "[download] Finished downloading playlist:",
@@ -176,6 +197,10 @@ class PlaylistHandler:
     def run(self):
         """Public run handler method to attempt to download the playlist"""
         self._init_message_handler()
+        self._message("Requesting playlist data", "info")
+        self._playlist.get_playlist_data()
+        t = f"Playlist is of length {self._playlist.length_str}"
+        self._message(t, "ok")
         self._message("Starting playlist download", "ok")
         time_start = time.time()
         while self._loop:
@@ -293,19 +318,16 @@ class PlaylistHandler:
                     self._check_speed(speed)
                 continue
             # Check the video index in the playlist
-            if (vi := self._rex.get("video_index").search(line)) is not None:
-                n = vi.groupdict().get("n")
-                if not self._playlist_length_set:
-                    self._playlist.length = int(n)
-                    self._playlist.set_index(self._playlist.index)
-                    self._playlist_length_set = True
+            if self._rex.get("video_index").search(line) is not None:
                 if hasattr(self, "_current_video"):
                     if self._current_video.is_guarded():
                         self._current_video.unguard()
                     else:
                         self._notify_video_downloaded()
                         self._increment_playlist_index()
-                t = f"Downloading video {self._playlist.index_padded} of {n}"
+                t = "Downloading video {i} of {n}".format(
+                    i=self._playlist.index_padded,
+                    n=self._playlist.length_str)
                 self._message(t, "info")
                 self._current_video = Video(time_start=time.time())
                 continue
