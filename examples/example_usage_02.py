@@ -8,7 +8,8 @@ if __name__ == "__main__":
 
     # MP batch handler:
     from multiprocess_runner import MultiprocessRunner
-    MultiprocessRunner(sys.argv[1]).run()
+    mh = MultiprocessRunner(sys.argv[1])
+    mh.run()
 
     # OR
 
@@ -17,3 +18,10 @@ if __name__ == "__main__":
     bh = BatchHandler()
     bh.read_video_links(sys.argv[1])
     bh.run()
+
+    # OR
+
+    # Playlist handler:
+    from playlist_handler import PlaylistHandler
+    ph = PlaylistHandler(sys.argv[1])
+    ph.run()
