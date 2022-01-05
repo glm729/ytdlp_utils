@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 
-from message import Message
+from message_handler import MessageHandler
 
 
 # Class definitions
@@ -218,7 +218,7 @@ class PlaylistHandler:
                 f"{l} video{s} failed to download:",
                 *self._failed))
             self._message(t, form="warn")
-        self._close_message_handler()
+        self._end_message_handler()
 
     # ---- Private methods
 
@@ -253,20 +253,9 @@ class PlaylistHandler:
                 return
         self._current_video.slow_count = update_value
 
-    def _close_message_handler(self):
-        """Tear down the message handling components"""
-        self._queue_message.join()
-        self._waiting = False
-        self._thread_message.join()
-
-    def _fun_thread_message(self):
-        """Message thread function"""
-        while self._waiting:
-            try:
-                self._print_message(self._queue_message.get(timeout=0.2))
-                self._queue_message.task_done()
-            except queue.Empty:
-                pass
+    def _end_message_handler(self):
+        """End the message handler operations"""
+        self._message_handler.end()
 
     def _fun_thread_stderr(self, stderr):
         """Stderr thread function
@@ -372,29 +361,21 @@ class PlaylistHandler:
         Initialises recursive lock, message queue, and message thread.  Starts
         the message thread immediately.
         """
-        self._lock = threading.RLock()
-        self._queue_message = queue.Queue()
-        self._thread_message = threading.Thread(
-            target=self._fun_thread_message,
-            daemon=True)
-        self._thread_message.start()
+        self._message_handler = MessageHandler()
+        self._message_handler.start()
 
     def _join_check_threads(self):
         """Join the stdout and stderr check threads"""
         self._thread_stdout.join()
         self._thread_stderr.join()
 
-    def _message(self, t, f):
-        """Enqueue a message to print
+    def _message(self, text: str, form: str) -> None:
+        """Enqueue a message to print, via the message handler
 
-        @param t Message text.
-        @param f Message format.
+        @param text Message text.
+        @param form Message format.
         """
-        self._lock.acquire()
-        try:
-            self._queue_message.put(Message(t, form=f))
-        finally:
-            self._lock.release()
+        self._message_handler.message(text=text, form=form)
 
     def _message_prefix(self):
         """Generate a message prefix for the current video"""
@@ -432,17 +413,6 @@ class PlaylistHandler:
         self._current_video.time_end = time_end
         t = "{p}: Video downloaded and merged in {t:.1f}s"
         self._message(t.format(p=self._message_prefix(), t=time_end), "ok")
-
-    def _print_message(self, msg):
-        """Attempt to safely print a message from the message queue
-
-        @param msg Message to print while locked.
-        """
-        self._lock.acquire()
-        try:
-            msg.print()
-        finally:
-            self._lock.release()
 
     def _restart(self, cause):
         """Kill and restart the instance subprocess
