@@ -11,7 +11,7 @@ import subprocess
 import threading
 import time
 
-from message import Message
+from message_handler import MessageHandler
 
 
 # Class definition
@@ -65,7 +65,7 @@ class SubprocessRunner:
         notification of success or failure, and closes the message queue and
         thread at end.
         """
-        self._init_mq()
+        self._init_message_handler()
         self._message("Starting download", "ok")
         self._time_start = time.time()
         while self._restart:
@@ -79,7 +79,7 @@ class SubprocessRunner:
             t = f"Video download failed after {time_end:.1f}s"
             f = "error"
         self._message(t, f)
-        self._close_mq()
+        self._end_message_handler()
 
     # ---- Private methods ----
 
@@ -202,12 +202,6 @@ class SubprocessRunner:
                 return
         self.data.update({ "slow_count": update_value })
 
-    def _close_mq(self):
-        """Join the message queue and message thread"""
-        self._running = False
-        self._q_msg.join()
-        self._t_msg.join()
-
     def _decrement_stage(self):
         """Decrement the stage flag
 
@@ -218,19 +212,9 @@ class SubprocessRunner:
             return
         raise RuntimeError(f"DEBUG: {self._stage}")
 
-    def _fun_t_msg(self):
-        """Message queue thread function
-
-        Times out at 0.2s and begins again if no message.  Timeout is used to
-        reduce the thread's processor load.  Relies on the `_running` attr to
-        stop the loop.
-        """
-        while self._running:
-            try:
-                self._print(self._q_msg.get(timeout=0.2))
-                self._q_msg.task_done()
-            except queue.Empty:
-                pass
+    def _end_message_handler(self):
+        """End message handler operations"""
+        self._message_handler.end()
 
     def _get_stage(self):
         """Get the text for the current stored stage of the download
@@ -247,37 +231,27 @@ class SubprocessRunner:
         """Increment the stage flag"""
         self._stage += 1
 
-    def _init_mq(self):
-        """Initialise the message queue and message thread
+    def _init_message_handler(self):
+        """Initialise the message handler in the instance
 
-        Initialises recursive lock, message queue, and message thread.  Starts
-        the message thread immediately.
+        Uses MessageHandler instance.
         """
-        self._running = True
-        self._lock = threading.RLock()
-        self._q_msg = queue.Queue()
-        self._t_msg = threading.Thread(target=self._fun_t_msg, daemon=True)
-        self._t_msg.start()
+        self._message_handler = MessageHandler()
+        self._message_handler.start()
 
     def _join_threads(self):
         """Join the stdout- and stderr-check threads"""
         self._stdout_thread.join()
         self._stderr_thread.join()
 
-    def _message(self, t, f):
-        """Put a message on the message queue
+    def _message(self, text: str, form: str) -> None:
+        """Print a message via the message handler
 
-        Uses my Message class, so needs both text and message form.
-
-        @param t Message text.
-        @param f Message form.
+        @param text Message text.
+        @param form Message form.
         """
-        _t = f"\033[1;{self._colour_index}m{self._id}\033[0m: {t}"
-        self._lock.acquire()
-        try:
-            self._q_msg.put(Message(_t, form=f))
-        finally:
-            self._lock.release()
+        t = f"\033[1;{self._colour_index}m{self._id}\033[0m: {text}"
+        self._message_handler.message(text=t, form=form)
 
     def _new_process(self):
         """Start a new subprocess

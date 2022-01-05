@@ -15,8 +15,7 @@ if __name__ == "__main__":
 
     # Non-MP batch handler:
     from batch_handler import BatchHandler
-    bh = BatchHandler()
-    bh.read_video_links(sys.argv[1])
+    bh = BatchHandler(sys.argv[1])
     bh.run()
 
     # OR
