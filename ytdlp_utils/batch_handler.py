@@ -58,7 +58,7 @@ class BatchHandler:
         @param text Message text.
         @param form Message form.
         """
-        self._message_handler.message(text=t, form=f)
+        self._message_handler.message(text=text, form=form)
 
     def _read_video_links(self, path: str) -> bool:
         """Read the video links text file and store the data
