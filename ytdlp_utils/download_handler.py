@@ -309,7 +309,8 @@ class DownloadHandler:
         speed = data.get("speed")
         percentage = round((current_bytes / total_bytes) * 100)
         self._check_percentage(percentage)
-        self._check_speed(speed)
+        if speed is not None:
+            self._check_speed(speed)
 
     def _progress_hook_finished(self, data) -> None:
         """Custom progress hook for the "finished" status
