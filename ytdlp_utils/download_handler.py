@@ -184,7 +184,7 @@ class DownloadHandler:
             "bestvideo[height=720][fps=60]+bestaudio",
             "bestvideo[height=720][fps=30]+bestaudio",
             "bestvideo[height<=480]+bestaudio")),
-        "outtmpl": "TESTING__%(uploader)s__%(title)s.%(ext)s"
+        "outtmpl": "%(uploader)s/%(title)s.%(ext)s"
     }
 
     # ---- Constructor
@@ -271,7 +271,7 @@ class DownloadHandler:
                 else:
                     text = ''.join((
                         "{p}: Reached slow speed limit, restarting ",
-                        "(remaining: {r})"
+                        "(remaining: {r})"))
                     self._message(
                         text.format(p=v.prefix, r=cr - restarts),
                         "warn")
@@ -353,5 +353,6 @@ class DownloadHandler:
 
 
 if __name__ == "__main__":
-    dh = DownloadHandler(["A7xhz56RaxY", "ZdjcHv8xkjg"])
+    import sys
+    dh = DownloadHandler(sys.argv[1:])
     dh.run()
