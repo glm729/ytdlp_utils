@@ -15,7 +15,7 @@ from message_handler import MessageHandler
 # -----------------------------------------------------------------------------
 
 
-class InterruptSpeed(Exception):
+class DownloadTooSlow(Exception):
     pass
 
 
@@ -101,9 +101,10 @@ class DownloadHandlerLogger:
             return
         if message.startswith(y := "[youtube]"):
             video_id = message.split(":")[0].split(" ")[1]
-            if video_id != (c := self._handler._current_video):
+            if video_id != (c := self._handler._current_video.id):
+                # If this is not the first video, mark end of previous
                 if c is not None:
-                    previous = self._handler._get_current_video_data()
+                    previous = self._handler._current_video
                     text = "{p}: Video downloaded and merged in {t:.1f}s"
                     self._message(
                         text.format(
@@ -112,20 +113,20 @@ class DownloadHandlerLogger:
                         "ok")
                 self._handler._set_current_video(video_id)
                 text = "{p}: Starting download".format(
-                    p=self._handler._get_current_video_data().prefix)
+                    p=self._handler._current_video.prefix)
                 self._message(text, "ok")
-                self._handler._video_data.get(video_id).set_time_start()
+                self._handler._current_video.set_time_start()
             return
         if message.startswith("[download] Destination:"):
-            video_current = self._handler._get_current_video_data()
+            current = self._handler._current_video
             text = "{p}: Downloading {s}".format(
-                p=video_current.prefix,
-                s=video_current.get_stage_text(lower=True))
+                p=current.prefix,
+                s=current.get_stage_text(lower=True))
             self._message(text, "info")
             return
         if message.startswith("[Merger]"):
             text = "{p}: Merging data".format(
-                p=self._handler._get_current_video_data().prefix)
+                p=self._handler._current_video.prefix)
             self._message(text, "info")
             return
         if message.startswith("[download]"):
@@ -188,7 +189,13 @@ class DownloadHandler:
 
     # ---- Constructor
 
-    def __init__(self, video_ids):
+    def __init__(
+            self,
+            video_ids,
+            count_slow: int = 30,
+            count_restart: int = 10):
+        self._count_slow = count_slow
+        self._count_restart = count_restart
         self._store_video_data(video_ids)
 
     # ---- Public methods
@@ -197,6 +204,7 @@ class DownloadHandler:
         """Main public run method"""
         self._init_message_handler()
         self._logger = DownloadHandlerLogger(self)  # wooo
+        self._remaining = list(self._video_data.keys())
         ytdlp_opts = self._ytdlp_options.copy()
         ytdlp_opts.update({
             "logger": self._logger,
@@ -208,25 +216,30 @@ class DownloadHandler:
         self._message("Starting operations", "ok")
         time_start = time.time()
         with yt_dlp.YoutubeDL(ytdlp_opts) as yt:
-            yt.download(self._video_data.keys())
-        last = self._get_current_video_data()
+            while True:
+                try:
+                    yt.download(self._remaining)
+                except DownloadTooSlow:
+                    continue
+                if len(self._remaining) == 0:
+                    break
+        last = self._current_video
         text_last = "{p}: Video downloaded and merged in {t:.1f}s".format(
             p=last.prefix,
             t=time.time() - last.time_start)
         self._message(text_last, "ok")
-        text_end = "Videos downloaded and merged in {t:.1f}s"
+        text_end = "All videos downloaded in {t:.1f}s"
         self._message(text_end.format(t=time.time() - time_start), form="ok")
         self._end_message_handler()
 
     # ---- Private methods
 
-    def _check_percentage(self, video_id: str, percentage: int) -> None:
+    def _check_percentage(self, percentage: int) -> None:
         """Check percentage for the current download
 
-        @param video_id ID of the current video download.
         @param percentage Integer percentage from the current info dict.
         """
-        data = self._video_data.get(video_id)
+        data = self._current_video
         floor_20_pc = percentage - (percentage % 20)
         if floor_20_pc >= (data.progress + 20):
             text = "{p}: {s} download reached {v}% ({t:.1f}s)".format(
@@ -235,7 +248,7 @@ class DownloadHandler:
                 v=str(floor_20_pc).rjust(3, " "),
                 t=time.time() - data.time_start)
             self._message(text, "info")
-            self._video_data.get(video_id).progress = floor_20_pc
+            self._current_video.progress = floor_20_pc
 
     def _check_speed(self, speed: float) -> None:
         """Check speed of the current download
@@ -243,15 +256,32 @@ class DownloadHandler:
         @param speed Speed of the download in bytes per second, from the
         current info dict.
         """
-        pass
+        update = 0
+        slow = (speed / (1024 ** 2)) < 1
+        if slow:
+            v = self._current_video
+            update = v.count_slow + 1
+            if update > self._count_slow:
+                v.count_slow = 0
+                restarts = v.count_restart + 1
+                if restarts > (cr := self._count_restart):
+                    text = "{p}: Restart limit reached, removing from queue"
+                    self._message(text.format(p=v.prefix), "warn")
+                    self._remaining.pop(0)
+                else:
+                    text = ''.join((
+                        "{p}: Reached slow speed limit, restarting ",
+                        "(remaining: {r})"
+                    self._message(
+                        text.format(p=v.prefix, r=cr - restarts),
+                        "warn")
+                    v.count_restart = restarts
+                raise DownloadTooSlow()
+        self._current_video.count_slow = update
 
     def _end_message_handler(self) -> None:
         """Close the instance MessageHandler"""
         self._message_handler.end()
-
-    def _get_current_video_data(self):
-        """Return the dataset for the current video ID"""
-        return self._video_data.get(self._current_video)
 
     def _init_message_handler(self) -> None:
         """Instantiate and start the instance MessageHandler"""
@@ -274,12 +304,11 @@ class DownloadHandler:
         """
         if not data.get("status") == "downloading":
             return
-        video_id = data.get("info_dict").get("id")
         total_bytes = data.get("total_bytes")
         current_bytes = data.get("downloaded_bytes")
         speed = data.get("speed")
         percentage = round((current_bytes / total_bytes) * 100)
-        self._check_percentage(video_id, percentage)
+        self._check_percentage(percentage)
         self._check_speed(speed)
 
     def _progress_hook_finished(self, data) -> None:
@@ -290,15 +319,16 @@ class DownloadHandler:
         """
         if not data.get("status") == "finished":
             return
-        video_id = data.get("info_dict").get("id")
-        self._video_data.get(video_id).increment_stage()
+        self._current_video.increment_stage()
+        if self._current_video.stage > 1:
+            self._remaining.pop(0)
 
     def _set_current_video(self, video_id: str) -> None:
         """Set the current video ID for the instance
 
         @param video_id Video ID to set as the current video.
         """
-        self._current_video = video_id
+        self._current_video = self._video_data.get(video_id)
 
     def _store_video_data(self, video_ids) -> None:
         """Store a structured set of video data in the instance
@@ -315,7 +345,7 @@ class DownloadHandler:
                 continue
             colour_index += 1
         self._video_data = data
-        self._current_video = None
+        self._current_video = Video(None)
 
 
 # Operations
