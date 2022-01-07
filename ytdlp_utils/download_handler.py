@@ -203,6 +203,7 @@ class DownloadHandler:
     def run(self) -> None:
         """Main public run method"""
         self._init_message_handler()
+        self._failed = []
         self._logger = DownloadHandlerLogger(self)  # wooo
         self._remaining = list(self._video_data.keys())
         ytdlp_opts = self._ytdlp_options.copy()
@@ -216,13 +217,7 @@ class DownloadHandler:
         self._message("Starting operations", "ok")
         time_start = time.time()
         with yt_dlp.YoutubeDL(ytdlp_opts) as yt:
-            while True:
-                try:
-                    yt.download(self._remaining)
-                except DownloadTooSlow:
-                    continue
-                if len(self._remaining) == 0:
-                    break
+            self._loop(yt)
         last = self._current_video
         text_last = "{p}: Video downloaded and merged in {t:.1f}s".format(
             p=last.prefix,
@@ -230,9 +225,21 @@ class DownloadHandler:
         self._message(text_last, "ok")
         text_end = "All videos downloaded in {t:.1f}s"
         self._message(text_end.format(t=time.time() - time_start), form="ok")
+        self._check_failures()
         self._end_message_handler()
 
     # ---- Private methods
+
+    def _check_failures(self) -> None:
+        """Check for any download failures and notify which IDs failed"""
+        l = len(self._failed)
+        if l == 0:
+            return
+        s = '' if l == 1 else "s"
+        text = f"\n{' ' * 7}".join((
+            f"{l} video{s} failed to download:",
+            *self._failed))
+        self._message(text, "warn")
 
     def _check_percentage(self, percentage: int) -> None:
         """Check percentage for the current download
@@ -256,28 +263,19 @@ class DownloadHandler:
         @param speed Speed of the download in bytes per second, from the
         current info dict.
         """
-        update = 0
         slow = (speed / (1024 ** 2)) < 1
+        update = 0
+        v = self._current_video
         if slow:
-            v = self._current_video
             update = v.count_slow + 1
             if update > self._count_slow:
                 v.count_slow = 0
-                restarts = v.count_restart + 1
-                if restarts > (cr := self._count_restart):
-                    text = "{p}: Restart limit reached, removing from queue"
-                    self._message(text.format(p=v.prefix), "warn")
-                    self._remaining.pop(0)
+                if (v.count_restart + 1) > self._count_restart:
+                    self._restart_limit_reached()
                 else:
-                    text = ''.join((
-                        "{p}: Reached slow speed limit, restarting ",
-                        "(remaining: {r})"))
-                    self._message(
-                        text.format(p=v.prefix, r=cr - restarts),
-                        "warn")
-                    v.count_restart = restarts
+                    self._restart_slow()
                 raise DownloadTooSlow()
-        self._current_video.count_slow = update
+        v.count_slow = update
 
     def _end_message_handler(self) -> None:
         """Close the instance MessageHandler"""
@@ -287,6 +285,22 @@ class DownloadHandler:
         """Instantiate and start the instance MessageHandler"""
         self._message_handler = MessageHandler()
         self._message_handler.start()
+
+    def _loop(self, yt) -> None:
+        """Run the youtube download loop
+
+        Abstracted from the main run method because it was getting a bit
+        deeply-nested for my liking.
+
+        @param yt yt_dlp.YoutubeDL object to use for downloads.
+        """
+        while True:
+            try:
+                yt.download(self._remaining)
+            except DownloadTooSlow:
+                continue
+            if len(self._remaining) == 0:
+                return
 
     def _message(self, text: str, form: str) -> None:
         """Print a message via the instance MessageHandler
@@ -323,6 +337,29 @@ class DownloadHandler:
         self._current_video.increment_stage()
         if self._current_video.stage > 1:
             self._remaining.pop(0)
+
+    def _restart_limit_reached(self) -> None:
+        """Abstracted ops for when restart limit is reached
+
+        Restart limit for current video only.  Abstracted because the volume of
+        code in high indent levels was a bit much.
+        """
+        text = "{p}: Restart limit reached, removing from queue"
+        self._message(text.format(p=self._current_video.prefix), "warn")
+        self._failed.append(self._remaining.pop(0))
+        self._set_current_video(self._remaining[0])
+
+    def _restart_slow(self) -> None:
+        """Notify of a slow-speed restart and increment restart count
+
+        Abstracted because there was a lot of code in a high nesting level.
+        """
+        v = self._current_video
+        text = "{p}: Reached slow speed limit, restarting (remaining: {r})"
+        self._message(
+            text.format(p=v.prefix, r=self._count_restart - v.count_restart),
+            "warn")
+        v.count_restart += 1
 
     def _set_current_video(self, video_id: str) -> None:
         """Set the current video ID for the instance
