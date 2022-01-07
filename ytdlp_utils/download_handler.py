@@ -355,11 +355,10 @@ class DownloadHandler:
         Abstracted because there was a lot of code in a high nesting level.
         """
         v = self._current_video
-        text = "{p}: Reached slow speed limit, restarting (remaining: {r})"
-        self._message(
-            text.format(p=v.prefix, r=self._count_restart - v.count_restart),
-            "warn")
         v.count_restart += 1
+        r = self._count_restart - v.count_restart
+        text = "{p}: Reached slow speed limit, restarting (remaining: {r})"
+        self._message(text.format(p=v.prefix, r=r), "warn")
 
     def _set_current_video(self, video_id: str) -> None:
         """Set the current video ID for the instance
