@@ -129,6 +129,12 @@ class DownloadHandlerLogger:
                 p=self._handler._current_video.prefix)
             self._message(text, "info")
             return
+        if message.endswith("has already been downloaded"):
+            text = "{p}: Video already downloaded".format(
+                p=self._handler._current_video.prefix)
+            self._message(text, "warn")
+            self._handler._remaining.pop(0)
+            return
         if message.startswith("[download]"):
             return
         self._message(message, "data")
@@ -347,7 +353,6 @@ class DownloadHandler:
         text = "{p}: Restart limit reached, removing from queue"
         self._message(text.format(p=self._current_video.prefix), "warn")
         self._failed.append(self._remaining.pop(0))
-        self._set_current_video(self._remaining[0])
 
     def _restart_slow(self) -> None:
         """Notify of a slow-speed restart and increment restart count
