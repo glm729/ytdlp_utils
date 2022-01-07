@@ -9,6 +9,7 @@ import json
 import queue
 import subprocess
 import threading
+import time
 
 from message_handler import MessageHandler
 
@@ -37,6 +38,7 @@ class ChannelChecker:
         if not self._read_channel_data(self._path):
             self._close_message_handler()
             return
+        time_start = time.time()
         self._generate_prefixes()
         result = []
         for data in self.channel_data:
@@ -44,7 +46,8 @@ class ChannelChecker:
             self._check_result(res)
             result.append(res)
         self._write_channel_data(self._export(result))
-        self._message("All channel data checked", "ok")
+        time_end = time.time() - time_start
+        self._message(f"All channel data checked in {time_end:.1f}s", "ok")
         self._close_message_handler()
 
     # ---- Private methods
