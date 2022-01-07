@@ -120,7 +120,7 @@ class ChannelChecker:
         if l == 0:
             return
         s = '' if l == 1 else "s"
-        title_changes = map(lambda x: f"\n{' ' * 9}=>  ".join(x), new_titles)
+        title_changes = map(lambda x: f"\n{' ' * 9}--> ".join(x), new_titles)
         text = f"{new_data.get('title')}: {l} video title{s} changed:"
         self._message(f"\n{' ' * 7}- ".join((text, *title_changes)), "warn")
 
@@ -161,7 +161,7 @@ class ChannelChecker:
 
         @param path Path to the channel data JSON.
         """
-        self._message(f"Reading channel data file: {path}", "info")
+        self._message(f"Reading channel data file: {path}", "data")
         try:
             with open(path, "r") as fh:
                 data = fh.read()
