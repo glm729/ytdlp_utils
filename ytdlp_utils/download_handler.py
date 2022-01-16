@@ -25,6 +25,8 @@ class DownloadTooSlow(Exception):
 
 class Video:
 
+    _dash_notified = False
+
     _prefix_template = "\033[1;{colour}m{video_id}\033[0m"
 
     _stage_text = {
@@ -96,6 +98,7 @@ class Video:
 class CustomLogger:
 
     _skip_hints = (
+        "[dashsegments]",
         "[info]",
         "[youtube]",
         "Deleting original file")
@@ -228,29 +231,49 @@ class DownloadHandler:
 
     # ---- Private methods
 
-    def _check_percentage(self, percentage: int) -> None:
+    def _check_percentage(
+            self,
+            numerator: int,
+            denominator: int,
+            dash: bool = False) -> None:
         """Check percentage for the current download
 
-        @param percentage Integer percentage from the current info dict.
+        @param numerator Numerator for the percentage calculation.
+        @param denominator Denominator for the percentage calculation.
+        @param dash Is this a DASH video calculation?
         """
         cv = self._current_video
+        try:
+            percentage = round((numerator / denominator) * 100)
+        except TypeError:
+            return
         floor_20_pc = percentage - (percentage % 20)
         if floor_20_pc >= (cv.progress + 20):
-            text = "{p}: {s} download reached {v}% ({t:.1f}s)".format(
+            if dash:
+                (n, d) = (str(numerator), str(denominator))
+                f = "fragment {i} of {t}; ".format(i=n.rjust(len(d), " "), t=d)
+            else:
+                f = ''
+            text = "{p}: {s} download reached {v}% ({f}{t:.1f}s)".format(
                 p=cv.prefix,
                 s=cv.get_stage(),
                 v=str(floor_20_pc).rjust(3, " "),
+                f=f,
                 t=time.time() - cv.time_start)
             self._message(text, "info")
             cv.progress = floor_20_pc
 
-    def _check_speed(self, speed: float) -> None:
+    def _check_speed(self, speed: float, dash: bool = False) -> None:
         """Check speed of the current download
 
         @param speed Speed of the download in bytes per second, from the
         current info dict.
+        @param dash Is this a DASH video calculation?
         """
-        slow = (speed / (1024 ** 2)) < 1
+        try:
+            slow = (speed / (1024 * (512 if dash else 1024))) > 1
+        except TypeError:
+            return
         update = 0
         cv = self._current_video
         if slow:
@@ -288,13 +311,23 @@ class DownloadHandler:
         """
         if not data.get("status") == "downloading":
             return
-        bytes_current = data.get("downloaded_bytes")
-        bytes_total = data.get("total_bytes")
+        if data.get("info_dict").get("fragments", None) is not None:
+            if not (cv := self._current_video)._dash_notified:
+                text = ''.join((
+                    f"{cv.prefix}: Video is DASH; minimum speed halved ",
+                    "and progress notifications modified"))
+                self._message(text, "warn")
+                cv._dash_notified = True
+            numerator = data.get("fragment_index")
+            denominator = data.get("fragment_count")
+            dash = True
+        else:
+            numerator = data.get("downloaded_bytes")
+            denominator = data.get("total_bytes")
+            dash = False
         speed = data.get("speed")
-        percentage = round((bytes_current / bytes_total) * 100)
-        self._check_percentage(percentage)
-        if speed is not None:
-            self._check_speed(speed)
+        self._check_percentage(numerator, denominator, dash)
+        self._check_speed(speed)
 
     def _progress_hook_finished(self, data) -> None:
         """Callback for the "finished" stage
