@@ -47,7 +47,7 @@ class Playlist:
         # Add a useful `outtmpl` for each individual video
         for video in videos:
             video.update({
-                "outtmpl": "%(uploader)s/{pt}/{i}__{vt}.%(ext)s".format(
+                "outtmpl": "%(uploader)s/{pt}/{i}__%(title)s.%(ext)s".format(
                     pt=title,
                     i=str(video.get("index")).rjust(len(str(l)), "0"),
                     vt=video.get("title")),
