@@ -133,6 +133,7 @@ class DownloadHandler:
         options and object.  Ends the message handler.
         """
         self._init_message_handler()
+        self._message(f"Received {len(self._video_data)} video links", "ok")
         ytdlp_options = self._ytdlp_defaults.copy()
         ytdlp_options.update({
             "logger": CustomLogger(self),
