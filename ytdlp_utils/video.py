@@ -9,22 +9,31 @@ class Video:
 
     _dash_notified = False
 
-    _prefix_template = "\033[1;{colour}m{video_id}\033[0m"
+    _default_prefix = "\033[1;{colour}m{video_id}\033[0m"
 
     _stage_text = {
         0: "Video",
         1: "Audio",
     }
 
-    def __init__(self, video_id: str, colour_index: int = 37):
-        self.already_downloaded = False
-        self.count_restart = 0
-        self.count_slow = 0
+    already_downloaded = False
+    count_restart = 0
+    count_slow = 0
+    outtmpl = None
+    progress = 0
+    stage = 0
+    time_start = None
+
+    def __init__(
+            self,
+            video_id: str,
+            prefix: str = None,
+            colour_index: int = 37):
         self.id = video_id
-        self.progress = 0
-        self.stage = 0
-        self.time_start = None
-        self._make_prefix(colour_index)
+        if prefix is None:
+            self._make_prefix(colour_index)
+        else:
+            self.prefix = prefix
 
     # ---- Public methods
 
@@ -72,6 +81,6 @@ class Video:
         @param colour_index Shell escape colour to use for prefix text
         colouring.
         """
-        self.prefix = self._prefix_template.format(
+        self.prefix = self._default_prefix.format(
             colour=str(colour_index),
             video_id=self.id)
