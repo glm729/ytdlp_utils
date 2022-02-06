@@ -5,8 +5,9 @@
 # -----------------------------------------------------------------------------
 
 
-import functools
 import json
+import queue
+import threading
 import time
 import yt_dlp
 
@@ -41,15 +42,20 @@ class ChannelCheckerLogger:
 
 class ChannelChecker:
 
+
     _ytdlp_defaults = {
         "extract_flat": True
     }
 
-    def __init__(self, file_path: str, n: int = 6):
-        self._n = n
-        self._path = file_path
+
+    def __init__(self, file_path: str, n_videos: int = 6, n_threads: int = 1):
+        self.file_path = file_path
+        self.n_threads = n_threads
+        self.n_videos = n_videos
+
 
     # ---- Public methods
+
 
     def run(self) -> None:
         """Public run method
@@ -59,26 +65,88 @@ class ChannelChecker:
         yt_dlp options.  Requests all channel data and processes.  Notifies of
         completion and timing, and ends message handler.
         """
+
+        # Start the message handler, but kick if failed to read file
         self._init_message_handler()
-        if not self._read_file(self._path):
+        if not self._read_file(self.file_path):
             self._end_message_handler()
             return
+
+        # Initialise required run data
         time_start = time.time()
         self._logger = ChannelCheckerLogger(self)
         ytdlp_options = self._ytdlp_defaults.copy()
         ytdlp_options.update({
             "logger": self._logger,
-            "playlistend": self._n,
+            "playlistend": self.n_videos,
         })
-        with yt_dlp.YoutubeDL(ytdlp_options) as yt:
-            func = functools.partial(self._check_channel, yt=yt)
-            new_data = list(map(func, self.channel_data))
-        self._write_file(self._path, new_data)
+
+        # Initialise threading and queue requirements
+        task_queue = queue.Queue()
+        result_queue = queue.Queue()
+        for data in self.channel_data:
+            task_queue.put(data)
+
+        # Initialise task threads
+        task_threads = []
+        for _ in range(0, self.n_threads):
+            task_threads.append(threading.Thread(
+                target=self._fun_thread_task,
+                args=(task_queue, result_queue, ytdlp_options),
+                daemon=True))
+
+        # Initialise results gathering requirements and start results thread
+        self._loop = True
+        self._lock = threading.RLock()
+        self.result = []
+        result_thread = threading.Thread(
+            target=self._fun_thread_result,
+            args=(result_queue,),
+            daemon=True)
+        result_thread.start()
+
+        # Start all task threads and schedule join
+        for t in task_threads:
+            t.start()
+        for t in task_threads:
+            t.join()
+
+        # Join the task and results queues, and end the results thread loop
+        task_queue.join()
+        result_queue.join()
+        self._loop = False
+        result_thread.join()
+
+        # Sort the results data by uploader title, and write back to the file
+        new_data = list(sorted(self.result, key=lambda x: x.get("title")))
+        self._write_file(self.file_path, new_data)
+
+        # Notify completion
         text = "All channels checked in {t:.1f}s"
         self._message(text.format(t=time.time() - time_start), "ok")
+
+        # Clean up the message handler
         self._end_message_handler()
 
+
     # ---- Private methods
+
+
+    def _append_result(self, result) -> None:
+        """Append a result to the instance results list
+
+        Wrap appending results data in the instance recursive lock, to avoid
+        collisions.  There's only one results thread, but it's not the main
+        thread, so its access should be locked.
+
+        @param result Results data to append
+        """
+        self._lock.acquire()
+        try:
+            self.result.append(result)
+        finally:
+            self._lock.release()
+
 
     def _check_channel(self, data, yt) -> dict:
         """Extract and check incoming data for the given channel
@@ -110,6 +178,7 @@ class ChannelChecker:
         self._check_new_videos(output, new_videos)
         return output
 
+
     def _check_new_titles(self, new_data, new_titles) -> None:
         """Check for and notify of title changes for the given channel
 
@@ -123,6 +192,7 @@ class ChannelChecker:
         title_changes = map(lambda x: f"\n{' ' * 9}--> ".join(x), new_titles)
         text = f"{new_data.get('title')}: {l} video title{s} changed:"
         self._message(f"\n{' ' * 7}- ".join((text, *title_changes)), "warn")
+
 
     def _check_new_videos(self, new_data, new_videos) -> None:
         """Check for an notify of new videos for the given channel
@@ -139,14 +209,61 @@ class ChannelChecker:
         text = f"\n{' ' * 7}- ".join((f"{t}: {l} new upload{s}:", *new_videos))
         self._message(text, "ok")
 
+
     def _end_message_handler(self) -> None:
         """End the instance message handler"""
         self._message_handler.end()
+
+
+    def _fun_thread_result(self, result_queue) -> None:
+        """Result thread function
+
+        Set a timeout on the `get` call to reduce processor load.  Wrap
+        appending the results data in a recursive lock to avoid collisions.
+
+        @param result_queue Queue from which to get results data
+        """
+        while self._loop:
+            try:
+                result = result_queue.get(timeout=0.2)
+                self._append_result(result)
+                result_queue.task_done()
+            except queue.Empty:
+                pass
+
+
+    def _fun_thread_task(
+            self,
+            task_queue,
+            result_queue,
+            ytdlp_options) -> None:
+        """Task thread function
+
+        Given a task queue to get from, a results queue to put into, and an
+        options object to use for yt_dlp, check video data for each channel
+        dataset grabbed from the task queue.  End when the task queue is empty.
+
+        @param task_queue Queue from which to get tasks
+        @param result_queue Queue for which to put completed task results
+        @param ytdlp_options Dict of options to use for the `yt_dlp.YoutubeDL`
+        object
+        """
+        with yt_dlp.YoutubeDL(ytdlp_options) as yt:
+            while True:
+                try:
+                    task = task_queue.get(block=False)
+                    result = self._check_channel(task, yt)
+                    self._put_result(result_queue, result)
+                    task_queue.task_done()
+                except queue.Empty:
+                    break
+
 
     def _init_message_handler(self) -> None:
         """Initialise and start the instance message handler"""
         self._message_handler = MessageHandler()
         self._message_handler.start()
+
 
     def _message(self, text: str, form: str) -> None:
         """Print a message via the instance message handler
@@ -155,6 +272,22 @@ class ChannelChecker:
         @param form Message form.
         """
         self._message_handler.message(text=text, form=form)
+
+
+    def _put_result(self, result_queue, result) -> None:
+        """Put a result in the results queue
+
+        Lock putting the result to avoid collisions.
+
+        @param result_queue Queue in which to put results data
+        @param result Results data to put in the results queue
+        """
+        self._lock.acquire()
+        try:
+            result_queue.put(result)
+        finally:
+            self._lock.release()
+
 
     def _read_file(self, path: str) -> bool:
         """Read, parse, and store the contents of the given channel data JSON
@@ -178,6 +311,7 @@ class ChannelChecker:
         self.channel_data = data_json
         return True
 
+
     def _write_file(self, path: str, data) -> None:
         """Write the updated channel data JSON to the given file path
 
@@ -197,6 +331,33 @@ class ChannelChecker:
 
 
 if __name__ == "__main__":
-    import sys
-    cc = ChannelChecker(sys.argv[1])
+
+    import argparse
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "file_path",
+        help="File path for the channel data JSON",
+        type=str)
+    parser.add_argument(
+        "-n",
+        "--number",
+        help="Number of videos for which to check",
+        type=int,
+        default=6)
+    parser.add_argument(
+        "-t",
+        "--threads",
+        help="Number of threads to use for requesting channel data",
+        type=int,
+        default=1)
+
+    args = parser.parse_args()
+
+    cc = ChannelChecker(
+        file_path=args.file_path,
+        n_videos=args.number,
+        n_threads=args.threads)
+
     cc.run()
