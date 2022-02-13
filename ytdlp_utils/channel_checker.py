@@ -118,7 +118,9 @@ class ChannelChecker:
         result_thread.join()
 
         # Sort the results data by uploader title, and write back to the file
-        new_data = list(sorted(self.result, key=lambda x: x.get("title")))
+        new_data = list(sorted(
+            self.result,
+            key=lambda x: x.get("title").lower()))
         self._write_file(self.file_path, new_data)
 
         # Notify completion
