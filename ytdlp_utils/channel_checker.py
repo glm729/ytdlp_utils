@@ -213,29 +213,30 @@ class CCTaskThread(threading.Thread):
         Get tasks from a task queue, and process the data.  Stop when no more
         tasks are available from the queue and the stop marker is set.
         """
-        text_requesting = "{p}  \033[34mRequesting data\033[m"
-        text_done = "{p}  \033[32mData retrieved\033[m"
+        req_p = "\033[1;33m?\033[m"
+        req_t = "\033[34mRequesting data\033[m"
+        done_p = "\033[1;32m✔\033[m"
+        done_t = "\033[32mData retrieved\033[m"
         # Clear the stop event if already set
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
             try:
                 (idx, task) = self.qt.get(timeout=0.2)
+                s = task.get("status")
+                s.set_prefix(req_p)
+                s.set_suffix(req_t)
                 with self.p.lock:
-                    self.p.screen.replace_line(
-                        idx,
-                        text_requesting.format(
-                            p=task.get("title").ljust(self.p._c0pw, " ")))
+                    self.p.screen.replace_line(idx, s.text)
                     self.p.screen.flush()
                 data = self.request_data(task)
                 result = self.check_data(task, data)
                 self.qr.put(result)
                 self.qt.task_done()
+                s.set_prefix(done_p)
+                s.set_suffix(done_t)
                 with self.p.lock:
-                    self.p.screen.replace_line(
-                        idx,
-                        text_done.format(
-                            p=task.get("title").ljust(self.p._c0pw, " ")))
+                    self.p.screen.replace_line(idx, s.text)
                     self.p.screen.flush()
             except queue.Empty:
                 if self._stopevent.is_set():
@@ -318,9 +319,9 @@ class ChannelChecker:
         l = len(self.data)
         s = '' if l == 1 else "s"
         if l == 0:
-            self.replace_line(0, "No channel data provided!")
+            self.replace_line(0, "\033[1;31m✘\033m  No channel data provided!")
             return
-        self.replace_line(0, f"Checking {l} channel{s}")
+        self.replace_line(0, f"\033[1;32m✔\033[m Checking {l} channel{s}")
 
         # Set yt-dlp options dict
         ytdlp_options = {
@@ -334,15 +335,22 @@ class ChannelChecker:
         qr = queue.Queue()
 
         # Prepare data for visuals
-        self._c0pw = max(map(lambda x: len(x.get("title")), self.data))
-        text_pending = "{p}  \033[30mPending\033[m"
+        c0pw = max(map(lambda x: len(x.get("title")), self.data))
+        pending_p = "\033[33m?\033[m"
+        pending_t = "\033[30mPending\033[m"
         l = len(self.screen.content)
 
         # Put tasks in the queue
         for (i, d) in enumerate(self.data):
+            d.update({
+                "status": StatusLine(
+                    d.get("title"),
+                    pending_p,
+                    pending_t,
+                    c0pw),
+            })
             qt.put((l + i, d))
-            self.screen.add_line(
-                text_pending.format(p=d.get("title").ljust(self._c0pw, " ")))
+            self.screen.add_line(d.get("status").text)
         self.screen.flush()
 
         # Generate task threads
@@ -377,6 +385,68 @@ class ChannelChecker:
         # Retrieve the results
         result = result_thread.result
 
+        # FIXME: Temporary change to output just the target data
+        result = list(map(
+            lambda x: {
+                "recent_uploads": x.get("recent_uploads"),
+                "title": x.get("title"),
+                "uri": x.get("uri"),
+            },
+            result))
+
+        # Return the output data
+        return result
+
+
+class StatusLine:
+
+    def __init__(self, main: str, prefix: str, suffix: str, pw: int):
+        self.m = main
+        self.p = prefix
+        self.s = suffix
+        self._pw = pw
+        self.build()
+
+    def build(self):
+        """
+        """
+        self.text = "{p} {m}  {s}".format(
+            p=self.p,
+            m=self.m.ljust(self._pw, " "),
+            s=self.s)
+
+    def set_main(self, text: str) -> None:
+        """
+
+        @param text
+        """
+        self.m = text
+        self.build()
+
+    def set_pad_width(self, pw: int) -> None:
+        """
+
+        @param pw
+        """
+        self._pw = pw
+        self.build()
+
+    def set_prefix(self, text: str) -> None:
+        """
+
+        @param text
+        """
+        self.p = text
+        self.build()
+
+    def set_suffix(self, text: str) -> None:
+        """
+
+        @param text
+        """
+        self.s = text
+        self.build()
+
 
 # Main function
 # -----------------------------------------------------------------------------
@@ -386,7 +456,9 @@ def main():
     with open(sys.argv[1], "r") as fh:
         data = json.loads(fh.read())
     cc = ChannelChecker(data)
-    cc.run()
+    result = cc.run()
+    # with open(sys.argv[1], "w") as fh:
+    #     fh.write(json.dumps(result, indent=2) + "\n")
 
 
 # Entrypoint
