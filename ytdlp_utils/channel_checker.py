@@ -7,6 +7,7 @@
 
 import io
 import queue
+import random
 import sys
 import threading
 import time
@@ -156,10 +157,55 @@ class CCTaskThread(threading.Thread):
 
     _stopevent = threading.Event()
 
-    def __init__(self, task_queue, result_queue, ytdlp_options):
+    def __init__(self, lock, screen, task_queue, result_queue, ytdlp_options):
+        super().__init__()
+        self.daemon = True
+        self.lock = lock
+        self.screen = screen
         self.qt = task_queue
         self.qr = result_queue
         self.opt = ytdlp_options
+
+
+    def check_data(self, task, data):
+        """Check the incoming data against the existing data
+
+        @param task Current channel data
+        @param data Incoming recent uploads data
+        """
+        new_title = []
+        new_video = []
+        for new in data:
+            is_new = True
+            for old in task.get("recent_uploads"):
+                if new.get("uri") == old.get("uri"):
+                    is_new = False
+                    if (nt := new.get("title")) == (ot := old.get("title")):
+                        new_title.append((ot, nt))
+            if is_new:
+                new_video.append(new.get("title"))
+        output = {
+            "recent_uploads": data,
+            "title": task.get("title"),
+            "uri": task.get("uri"),
+            "new_title": new_title,
+            "new_video": new_video,
+        }
+        return output
+
+
+    def request_data(self, task):
+        """Request recent videos data for a given channel
+
+        @param task Dict of channel data
+        @return List of dicts; list of top n_videos recent video uploads, with
+        only the title and URI
+        """
+        with yt_dlp.YoutubeDL(self.opt) as yt:
+            data = yt.extract_info(task.get("uri"), download=False)
+        return list(map(
+            lambda x: { "title": x.get("title"), "uri": x.get("url"), },
+            data.get("entries")))
 
 
     def run(self) -> None:
@@ -173,10 +219,18 @@ class CCTaskThread(threading.Thread):
             self._stopevent.clear()
         while True:
             try:
-                task = self.qt.get(timeout=0.2)
-                # result = ... TODO
+                (idx, task) = self.qt.get(timeout=0.2)
+                with self.lock:
+                    self.screen.replace_line(idx, "Requesting data")
+                    self.screen.flush()
+                # data = self.request_data(task)
+                # result = self.check_data(task, data)
                 # self.qr.put(result)
+                time.sleep(random.random() * 10)
                 self.qt.task_done()
+                with self.lock:
+                    self.screen.replace_line(idx, "Done!")
+                    self.screen.flush()
             except queue.Empty:
                 if self._stopevent.is_set():
                     break
@@ -195,6 +249,8 @@ class CCResultThread(threading.Thread):
     result = []
 
     def __init__(self, result_queue):
+        super().__init__()
+        self.daemon = True
         self.qr = result_queue
 
 
@@ -211,10 +267,16 @@ class CCResultThread(threading.Thread):
                 if self._stopevent.is_set():
                     break
 
+    def stop(self) -> None:
+        """
+        """
+        self._stopevent.set()
+
 
 
 class ChannelChecker:
 
+    lock = threading.RLock()
     screen = Overwriteable()
 
     def __init__(self, data, n_videos: int = 6, n_threads: int = 1):
@@ -250,10 +312,7 @@ class ChannelChecker:
         l = len(self.data)
         s = '' if l == 1 else "s"
         if l == 0:
-            # ... TODO
-            # Add warning message to output and stop
-            time.sleep(2)
-            self.replace_line(0, "Nothing to do!")
+            self.replace_line(0, "No channel data provided!")
             return
 
         # Set yt-dlp options dict
@@ -268,12 +327,20 @@ class ChannelChecker:
         qr = queue.Queue()
 
         # Put tasks in the queue
-        for d in self.data:
-            qt.put(d)
+        l = len(self.screen.content)
+        for (i, d) in enumerate(self.data):
+            qt.put((l + i, d))
+            self.screen.add_line("Pending")
+        self.screen.flush()
 
         # Generate task threads
         task_threads = list(map(
-            lambda x: CCTaskThread(qt, qr, ytdlp_options),
+            lambda x: CCTaskThread(
+                self.lock,
+                self.screen,
+                qt,
+                qr,
+                ytdlp_options),
             self.data))
 
         # Generate results collector thread
@@ -286,13 +353,26 @@ class ChannelChecker:
         # Start the result thread
         result_thread.start()
 
+        # Mark the task threads to stop, and wait for them to join
+        for t in task_threads:
+            t.stop()
+        for t in task_threads:
+            t.join()
+
+        # Mark the result thread to stop, and wait for it to join
+        result_thread.stop()
+        result_thread.join()
+
+        # Retrieve the results
+        result = result_thread.result
+
 
 # Main function
 # -----------------------------------------------------------------------------
 
 
 def main():
-    cc = ChannelChecker([])
+    cc = ChannelChecker(["thingo", "whatsit"])
     cc.run()
 
 
