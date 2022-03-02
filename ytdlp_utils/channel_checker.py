@@ -6,12 +6,12 @@
 
 
 import io
+import json
 import queue
-import random
 import sys
 import threading
 import time
-# import yt_dlp
+import yt_dlp
 
 
 # Class definitions
@@ -157,11 +157,10 @@ class CCTaskThread(threading.Thread):
 
     _stopevent = threading.Event()
 
-    def __init__(self, lock, screen, task_queue, result_queue, ytdlp_options):
+    def __init__(self, parent, task_queue, result_queue, ytdlp_options):
         super().__init__()
         self.daemon = True
-        self.lock = lock
-        self.screen = screen
+        self.p = parent
         self.qt = task_queue
         self.qr = result_queue
         self.opt = ytdlp_options
@@ -214,23 +213,30 @@ class CCTaskThread(threading.Thread):
         Get tasks from a task queue, and process the data.  Stop when no more
         tasks are available from the queue and the stop marker is set.
         """
+        text_requesting = "{p}  \033[34mRequesting data\033[m"
+        text_done = "{p}  \033[32mData retrieved\033[m"
         # Clear the stop event if already set
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
             try:
                 (idx, task) = self.qt.get(timeout=0.2)
-                with self.lock:
-                    self.screen.replace_line(idx, "Requesting data")
-                    self.screen.flush()
-                # data = self.request_data(task)
-                # result = self.check_data(task, data)
-                # self.qr.put(result)
-                time.sleep(random.random() * 10)
+                with self.p.lock:
+                    self.p.screen.replace_line(
+                        idx,
+                        text_requesting.format(
+                            p=task.get("title").ljust(self.p._c0pw, " ")))
+                    self.p.screen.flush()
+                data = self.request_data(task)
+                result = self.check_data(task, data)
+                self.qr.put(result)
                 self.qt.task_done()
-                with self.lock:
-                    self.screen.replace_line(idx, "Done!")
-                    self.screen.flush()
+                with self.p.lock:
+                    self.p.screen.replace_line(
+                        idx,
+                        text_done.format(
+                            p=task.get("title").ljust(self.p._c0pw, " ")))
+                    self.p.screen.flush()
             except queue.Empty:
                 if self._stopevent.is_set():
                     break
@@ -314,6 +320,7 @@ class ChannelChecker:
         if l == 0:
             self.replace_line(0, "No channel data provided!")
             return
+        self.replace_line(0, f"Checking {l} channel{s}")
 
         # Set yt-dlp options dict
         ytdlp_options = {
@@ -326,22 +333,26 @@ class ChannelChecker:
         qt = queue.Queue()
         qr = queue.Queue()
 
-        # Put tasks in the queue
+        # Prepare data for visuals
+        self._c0pw = max(map(lambda x: len(x.get("title")), self.data))
+        text_pending = "{p}  \033[30mPending\033[m"
         l = len(self.screen.content)
+
+        # Put tasks in the queue
         for (i, d) in enumerate(self.data):
             qt.put((l + i, d))
-            self.screen.add_line("Pending")
+            self.screen.add_line(
+                text_pending.format(p=d.get("title").ljust(self._c0pw, " ")))
         self.screen.flush()
 
         # Generate task threads
         task_threads = list(map(
             lambda x: CCTaskThread(
-                self.lock,
-                self.screen,
+                self,
                 qt,
                 qr,
                 ytdlp_options),
-            self.data))
+            range(self.n_threads)))
 
         # Generate results collector thread
         result_thread = CCResultThread(qr)
@@ -372,7 +383,9 @@ class ChannelChecker:
 
 
 def main():
-    cc = ChannelChecker(["thingo", "whatsit"])
+    with open(sys.argv[1], "r") as fh:
+        data = json.loads(fh.read())
+    cc = ChannelChecker(data)
     cc.run()
 
 
