@@ -13,8 +13,6 @@ import sys
 # -----------------------------------------------------------------------------
 
 
-
-
 class Overwriteable:
 
     buffer = io.StringIO(initial_value='', newline="\n")
@@ -73,23 +71,13 @@ class Overwriteable:
         self.buffer.truncate(0)
 
 
-    def redraw(self) -> None:
-        """
-
-        Might rename `flush` to `redraw`.
-
-        """
-        pass
-
-
-    def redraw_at(self, x: int, y: int) -> None:
-        """Redraw a specific character at a given set of coordinates
-
-        @param x
-        @param y
-        """
-        move_x = x  # ... TODO: Check how 0 is handled
-        move_y = self.lastlines - y
+    # def redraw_at(self, x: int, y: int) -> None:
+    #     """Redraw a specific character at a given set of coordinates
+    #     @param x
+    #     @param y
+    #     """
+    #     move_x = x  # ... TODO: Check how 0 is handled
+    #     move_y = self.lastlines - y
 
 
     def redraw_line(self, idx: int) -> None:
@@ -102,8 +90,8 @@ class Overwriteable:
         move = self.lastlines - idx
         print(f"\033[{move}F\033[2K", end='', file=self.stream)
         print(self.content[idx], end='', file=self.stream)
-        # ... TODO
-        # Reset position to end of content
+        # TODO: Reset position to end of content (needs testing)
+        # print(f"\033[{move}E", end='', file=self.stream)
 
 
     def replace_line(self, idx: int, text: str) -> None:
@@ -114,12 +102,3 @@ class Overwriteable:
         """
         self.content.pop(idx)
         self.content.insert(idx, text)
-
-
-    # def print(self, text, end: str = "\n") -> None:
-    #     """Print text to the overwriteable buffer
-    #     @param text Text to print into the buffer
-    #     @param end Ending character; defaults to newline
-    #     """
-    #     self.buffer.seek(0, 2)  # seek 0 bytes from position 2 == seek end
-    #     print(text, end=end, file=self.buffer)
