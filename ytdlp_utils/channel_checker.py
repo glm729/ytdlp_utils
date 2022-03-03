@@ -70,7 +70,7 @@ class CCTaskThread(threading.Thread):
             for old in task.get("recent_uploads"):
                 if new.get("uri") == old.get("uri"):
                     is_new = False
-                    if (nt := new.get("title")) == (ot := old.get("title")):
+                    if (nt := new.get("title")) != (ot := old.get("title")):
                         new_title.append((ot, nt))
             if is_new:
                 new_video.append(new.get("title"))
@@ -104,39 +104,67 @@ class CCTaskThread(threading.Thread):
         Get tasks from a task queue, and process the data.  Stop when no more
         tasks are available from the queue and the stop marker is set.
         """
-        req_p = "\033[1;33m?\033[m"
-        req_t = "\033[34mRequesting data\033[m"
-        done_p = "\033[1;32m✔\033[m"
-        done_t = "\033[32mData retrieved\033[m"
         # Clear the stop event if already set
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
             try:
                 (idx, task) = self.qt.get(timeout=0.2)
-                s = task.get("status")
-                s.set_prefix(req_p)
-                s.set_suffix(req_t)
-                with self.p.lock:
-                    self.p.screen.replace_line(idx, s.text)
-                    self.p.screen.flush()
+                self.mark_requesting(idx, task.get("status"))
                 data = self.request_data(task)
                 result = self.check_data(task, data)
                 self.qr.put(result)
                 self.qt.task_done()
-                s.set_prefix(done_p)
-                s.set_suffix(done_t)
-                with self.p.lock:
-                    self.p.screen.replace_line(idx, s.text)
-                    self.p.screen.flush()
+                self.mark_complete(idx, task.get("status"), result)
             except queue.Empty:
                 if self._stopevent.is_set():
                     break
 
 
+    def mark_complete(self, idx, status, result) -> None:
+        """Mark the current status line as complete
+
+        Provide info on changed and new titles, if any.
+
+        @param idx
+        @param status
+        @param result
+        """
+        prefix = "\033[1;32m✔\033[m"
+        suffix = "\033[32mData retrieved\033[m"
+        suffix_data = []
+        if (l := len(result.get("new_title"))) > 0:
+            s = '' if l == 1 else "s"
+            suffix_data.append(f"\033[33m{l} title{s} changed\033[m")
+        if (l := len(result.get("new_video"))) > 0:
+            s = '' if l == 1 else "s"
+            suffix_data.append(f"\033[32m{l} new video{s}\033[m")
+        if len(suffix_data) == 0:
+            suffix = "\033[34mNo new videos\033[m"
+        else:
+            suffix = "; ".join(suffix_data)
+        status.set_prefix(prefix)
+        status.set_suffix(suffix)
+        with self.p.lock:
+            self.p.screen.replace_line(idx, status.text)
+            self.p.screen.flush()
+
+
+    def mark_requesting(self, idx, status) -> None:
+        """Mark the current status line as being requested"""
+        prefix = "\033[1;33m?\033[m"
+        suffix = "\033[36mRequesting data\033[m"
+        status.set_prefix(prefix)
+        status.set_suffix(suffix)
+        with self.p.lock:
+            self.p.screen.replace_line(idx, status.text)
+            self.p.screen.flush()
+
+
     def stop(self) -> None:
         """Stop the thread operations"""
         self._stopevent.set()
+
 
 
 
@@ -166,9 +194,9 @@ class CCResultThread(threading.Thread):
                     break
 
     def stop(self) -> None:
-        """
-        """
+        """Stop thread operations"""
         self._stopevent.set()
+
 
 
 
