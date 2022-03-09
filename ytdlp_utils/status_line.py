@@ -52,3 +52,23 @@ class StatusLine:
         """
         self.s = text
         self.build()
+
+
+class ChannelStatus(StatusLine):
+
+    additional = []
+
+    def __init__(self, idx, main, prefix, suffix, pw):
+        super().__init__(main, prefix, suffix, pw)
+        self.idx = idx
+
+    def build(self):
+        """Build the status line text, and store the line count"""
+        self.text = "{p} \033[35m{m}\033[m  {s}".format(
+            p=self.p,
+            m=self.m.ljust(self._pw, " "),
+            s=self.s)
+        self.lc = 1
+        if (l := len(self.additional)) > 0:
+            self.text += "\n".join(self.additional)
+            self.lc += l
