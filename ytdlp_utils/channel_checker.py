@@ -363,8 +363,8 @@ def main():
 
     result = cc.run()
 
-    # with open(args.file_path, "w") as fh:
-    #     fh.write(json.dumps(result, indent=4) + "\n")
+    with open(args.file_path, "w") as fh:
+        fh.write(json.dumps(result, indent=4) + "\n")
 
 
 # Entrypoint
