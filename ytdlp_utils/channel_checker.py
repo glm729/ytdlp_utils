@@ -6,7 +6,6 @@
 
 
 import argparse
-import io
 import json
 import queue
 import sys
