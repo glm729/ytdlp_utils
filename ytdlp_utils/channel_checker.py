@@ -5,6 +5,7 @@
 # -----------------------------------------------------------------------------
 
 
+import argparse
 import io
 import json
 import queue
@@ -14,7 +15,7 @@ import time
 import yt_dlp
 
 from overwriteable import Overwriteable
-from status_line import StatusLine
+from status_line import ChannelStatus
 
 
 # Class definitions
@@ -78,10 +79,8 @@ class CCTaskThread(threading.Thread):
             "recent_uploads": data,
             "title": task.get("title"),
             "uri": task.get("uri"),
-            "new_title": new_title,
-            "new_video": new_video,
         }
-        return output
+        return (output, new_title, new_video)
 
 
     def request_data(self, task):
@@ -109,55 +108,70 @@ class CCTaskThread(threading.Thread):
             self._stopevent.clear()
         while True:
             try:
-                (idx, task) = self.qt.get(timeout=0.2)
-                self.mark_requesting(idx, task.get("status"))
+                (status, task) = self.qt.get(timeout=0.2)
+                self.mark_requesting(status)
                 data = self.request_data(task)
-                result = self.check_data(task, data)
+                (result, new_title, new_video) = self.check_data(task, data)
                 self.qr.put(result)
                 self.qt.task_done()
-                self.mark_complete(idx, task.get("status"), result)
+                self.mark_complete(status, result, new_title, new_video)
             except queue.Empty:
                 if self._stopevent.is_set():
                     break
 
 
-    def mark_complete(self, idx, status, result) -> None:
+    def mark_complete(self, status, result, new_title, new_video) -> None:
         """Mark the current status line as complete
 
         Provide info on changed and new titles, if any.
 
-        @param idx
         @param status
         @param result
+        @param new_title
+        @param new_video
         """
         prefix = "\033[1;32m✔\033[m"
         suffix = "\033[32mData retrieved\033[m"
         suffix_data = []
-        if (l := len(result.get("new_title"))) > 0:
+        nt = False
+        nv = False
+        if (l := len(new_title)) > 0:
             s = '' if l == 1 else "s"
             suffix_data.append(f"\033[33m{l} title{s} changed\033[m")
-        if (l := len(result.get("new_video"))) > 0:
+            nt = "\n  ↳ \033[33mChanged title{s}\033[m:\n{t}".format(
+                s=s,
+                t="\n".join(map(
+                    lambda x: f"    - {x[0]} => {x[1]}",
+                    new_title)))
+        if (l := len(new_video)) > 0:
             s = '' if l == 1 else "s"
             suffix_data.append(f"\033[32m{l} new video{s}\033[m")
+            nv = "\n  ↳ \033[32mNew video{s}\033[m:\n{t}".format(
+                s=s,
+                t="\n".join(map(lambda x: f"    - {x}", new_video)))
         if len(suffix_data) == 0:
             suffix = "\033[34mNo new videos\033[m"
         else:
             suffix = "; ".join(suffix_data)
+        if isinstance(nt, str):
+            suffix += nt
+        if isinstance(nv, str):
+            suffix += nv
         status.set_prefix(prefix)
         status.set_suffix(suffix)
         with self.p.lock:
-            self.p.screen.replace_line(idx, status.text)
+            self.p.screen.replace_line(status.idx, status.text)
             self.p.screen.flush()
 
 
-    def mark_requesting(self, idx, status) -> None:
+    def mark_requesting(self, status) -> None:
         """Mark the current status line as being requested"""
         prefix = "\033[1;33m?\033[m"
         suffix = "\033[36mRequesting data\033[m"
         status.set_prefix(prefix)
         status.set_suffix(suffix)
         with self.p.lock:
-            self.p.screen.replace_line(idx, status.text)
+            self.p.screen.replace_line(status.idx, status.text)
             self.p.screen.flush()
 
 
@@ -204,6 +218,7 @@ class ChannelChecker:
 
     lock = threading.RLock()
     screen = Overwriteable()
+    statuses = []
 
     def __init__(self, data, n_videos: int = 6, n_threads: int = 1):
         self.data = data
@@ -240,7 +255,7 @@ class ChannelChecker:
         if l == 0:
             self.replace_line(0, "\033[1;31m✘\033m  No channel data provided!")
             return
-        self.replace_line(0, f"\033[1;32m✔\033[m Checking {l} channel{s}")
+        self.replace_line(0, f"\033[1;32m⁜\033[m Checking {l} channel{s}")
 
         # Set yt-dlp options dict
         ytdlp_options = {
@@ -261,15 +276,15 @@ class ChannelChecker:
 
         # Put tasks in the queue
         for (i, d) in enumerate(self.data):
-            d.update({
-                "status": StatusLine(
+            status = ChannelStatus(
+                    i + 1,
                     d.get("title"),
                     pending_p,
                     pending_t,
-                    c0pw),
-            })
-            qt.put((l + i, d))
-            self.screen.add_line(d.get("status").text)
+                    c0pw)
+            self.statuses.append(status)
+            qt.put((status, d))
+            self.screen.add_line(status.text)
         self.screen.flush()
 
         # Generate task threads
@@ -304,15 +319,6 @@ class ChannelChecker:
         # Retrieve the results
         result = result_thread.result
 
-        # FIXME: Temporary change to output just the target data
-        result = list(map(
-            lambda x: {
-                "recent_uploads": x.get("recent_uploads"),
-                "title": x.get("title"),
-                "uri": x.get("uri"),
-            },
-            result))
-
         # Return the output data
         return result
 
@@ -324,12 +330,41 @@ class ChannelChecker:
 
 
 def main():
-    with open(sys.argv[1], "r") as fh:
+    """
+    """
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "file_path",
+        help="File path for the channel data JSON",
+        type=str)
+    parser.add_argument(
+        "-n",
+        "--number",
+        help="Number of videos for which to check",
+        type=int,
+        default=6)
+    parser.add_argument(
+        "-t",
+        "--threads",
+        help="Number of threads to use for requesting channel data",
+        type=int,
+        default=1)
+
+    args = parser.parse_args()
+
+    with open(args.file_path, "r") as fh:
         data = json.loads(fh.read())
-    cc = ChannelChecker(data)
+
+    cc = ChannelChecker(
+        data=data,
+        n_videos=args.number,
+        n_threads=args.threads)
+
     result = cc.run()
-    # with open(sys.argv[1], "w") as fh:
-    #     fh.write(json.dumps(result, indent=2) + "\n")
+
+    # with open(args.file_path, "w") as fh:
+    #     fh.write(json.dumps(result, indent=4) + "\n")
 
 
 # Entrypoint
