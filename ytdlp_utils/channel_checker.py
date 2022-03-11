@@ -315,8 +315,10 @@ class ChannelChecker:
         result_thread.stop()
         result_thread.join()
 
-        # Retrieve the results
-        result = result_thread.result
+        # Retrieve the results and sort the dict
+        result = list(sorted(
+            result_thread.result,
+            key=lambda x: x.get("title").lower()))
 
         # Return the output data
         return result
