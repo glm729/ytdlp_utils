@@ -37,6 +37,7 @@ class StatusLine:
         self.p = prefix
         self.s = suffix
         self._pw = pw
+        self.build()
 
     def build(self):
         """Build the status line text"""
@@ -53,6 +54,7 @@ class StatusLine:
         @param text Text to set
         """
         self.m = text
+        self.build()
 
     def set_pad_width(self, pw: int) -> None:
         """Set the pad width for the main content
@@ -60,6 +62,7 @@ class StatusLine:
         @param pw Pad width
         """
         self._pw = pw
+        self.build()
 
     def set_prefix(self, text: str) -> None:
         """Set the prefix for the status line content
@@ -67,6 +70,7 @@ class StatusLine:
         @param text Text to set
         """
         self.p = text
+        self.build()
 
     def set_suffix(self, text: str) -> None:
         """Set the suffix for the status line content
@@ -74,14 +78,15 @@ class StatusLine:
         @param text Text to set
         """
         self.s = text
+        self.build()
 
 
 class ChannelStatus(StatusLine):
 
     def __init__(self, idx, main, prefix, suffix, pw):
-        super().__init__(main, prefix, suffix, pw)
         self.additional = []
         self.idx = idx
+        super().__init__(main, prefix, suffix, pw)
 
     def build(self):
         """Build the channel status line text
