@@ -157,7 +157,6 @@ class CCTaskThread(threading.Thread):
             status.additional.extend(nv)
         status.set_prefix(prefix)
         status.set_suffix(suffix)
-        status.build()
         with self.p.lock:
             self.p.screen.replace_line(status.idx, status.text)
             self.p.screen.flush()
@@ -169,7 +168,6 @@ class CCTaskThread(threading.Thread):
         suffix = "\033[36mRequesting data\033[m"
         status.set_prefix(prefix)
         status.set_suffix(suffix)
-        status.build()
         with self.p.lock:
             self.p.screen.replace_line(status.idx, status.text)
             self.p.screen.flush()
@@ -282,7 +280,6 @@ class ChannelChecker:
                     pending_p,
                     pending_t,
                     c0pw)
-            status.build()
             self.statuses.append(status)
             qt.put((status, d))
             self.screen.add_line(status.text)
