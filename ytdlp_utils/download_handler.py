@@ -133,7 +133,9 @@ class DownloadHandler:
         options and object.  Ends the message handler.
         """
         self._init_message_handler()
-        self._message(f"Received {len(self._video_data)} video links", "ok")
+        l = len(self._video_data)
+        s = '' if l == 1 else "s"
+        self._message(f"Received {l} video link{s}", "ok")
         ytdlp_options = self._ytdlp_defaults.copy()
         ytdlp_options.update({
             "logger": CustomLogger(self),
@@ -147,7 +149,7 @@ class DownloadHandler:
         with yt_dlp.YoutubeDL(ytdlp_options) as yt:
             self._run(yt)
         time_elapsed = time.time() - time_start
-        text = "Downloads complete in {t:.1f}s".format(t=time_elapsed)
+        text = f"Download{s} complete in {time_elapsed:.1f}s"
         if (l := len(self._failed)) > 0:
             self._message(text, "warn")
             s = '' if l == 1 else "s"
