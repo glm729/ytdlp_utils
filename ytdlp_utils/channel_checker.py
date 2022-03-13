@@ -130,32 +130,31 @@ class CCTaskThread(threading.Thread):
         @param new_video
         """
         prefix = "\033[1;32m✔\033[m"
-        suffix = "\033[32mData retrieved\033[m"
         suffix_data = []
         nt = False
         nv = False
         if (l := len(new_title)) > 0:
             s = '' if l == 1 else "s"
             suffix_data.append(f"\033[33m{l} title{s} changed\033[m")
-            nt = "\n  ↳ \033[33mChanged title{s}\033[m:\n{t}".format(
-                s=s,
-                t="\n".join(map(
-                    lambda x: f"    - {x[0]} => {x[1]}",
-                    new_title)))
+            nt = [
+                f"↳ \033[33mChanged title{s}\033[m:",
+                *map(lambda x: f"  - {x[0]} => {x[1]}", new_title),
+            ]
         if (l := len(new_video)) > 0:
             s = '' if l == 1 else "s"
             suffix_data.append(f"\033[32m{l} new video{s}\033[m")
-            nv = "\n  ↳ \033[32mNew video{s}\033[m:\n{t}".format(
-                s=s,
-                t="\n".join(map(lambda x: f"    - {x}", new_video)))
+            nv = [
+                f"↳ \033[32mNew video{s}\033[m:",
+                *map(lambda x: f"  - {x}", new_video),
+            ]
         if len(suffix_data) == 0:
             suffix = "\033[34mNo new videos\033[m"
         else:
             suffix = "; ".join(suffix_data)
-        if isinstance(nt, str):
-            suffix += nt
-        if isinstance(nv, str):
-            suffix += nv
+        if isinstance(nt, list):
+            status.additional.extend(nt)
+        if isinstance(nv, list):
+            status.additional.extend(nv)
         status.set_prefix(prefix)
         status.set_suffix(suffix)
         with self.p.lock:
