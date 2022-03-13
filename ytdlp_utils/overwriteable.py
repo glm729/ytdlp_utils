@@ -71,29 +71,6 @@ class Overwriteable:
         self.buffer.truncate(0)
 
 
-    # def redraw_at(self, x: int, y: int) -> None:
-    #     """Redraw a specific character at a given set of coordinates
-    #     @param x
-    #     @param y
-    #     """
-    #     move_x = x  # ... TODO: Check how 0 is handled
-    #     move_y = self.lastlines - y
-
-
-    def redraw_line(self, idx: int) -> None:
-        """Redraw a specified line of content
-
-        Will this even work?  Needs testing!
-
-        @param idx Index of the content line to redraw
-        """
-        move = self.lastlines - idx
-        print(f"\033[{move}F\033[2K", end='', file=self.stream)
-        print(self.content[idx], end='', file=self.stream)
-        # TODO: Reset position to end of content (needs testing)
-        # print(f"\033[{move}E", end='', file=self.stream)
-
-
     def replace_line(self, idx: int, text: str) -> None:
         """Replace a content line
 
