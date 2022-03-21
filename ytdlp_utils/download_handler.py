@@ -330,14 +330,14 @@ class DownloadHandler:
         @param video_ids List or tuple of strings; IDs or links to the youtube
         videos to attempt to download.
         """
-        colour_index = 30
+        colour_index = 31
         self._video_data = {}
         for video_id in video_ids:
             self._video_data.update({
                 video_id: Video(video_id, colour_index=colour_index),
             })
             if colour_index >= 37:
-                colour_index = 30
+                colour_index = 31
                 continue
             colour_index += 1
 
