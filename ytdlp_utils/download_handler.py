@@ -7,7 +7,9 @@
 
 import multiprocessing
 import queue
+import random
 import threading
+import time
 
 from overwriteable import Overwriteable
 
@@ -88,14 +90,22 @@ class DHTaskProcess(multiprocessing.Process):
 
     def __init__(
             self,
-            task_queue: multiprocessing.JoinableQueue,
-            message_queue: multiprocessing.JoinableQueue,
+            lock: multiprocessing.RLock,
+            task_pipe,
+            message_pipe,
             ytdlp_options: dict):
         super().__init__(daemon=True)
         self._stopevent = multiprocessing.Event()
-        self.task_queue = task_queue
-        self.message_queue = message_queue
+        self.lock = lock
+        self.task_pipe = task_pipe
+        self.message_pipe = message_pipe
         self.ytdlp_options = ytdlp_options
+
+    def message(self, data: dict) -> None:
+        """
+        """
+        with self.lock:
+            self.message_pipe.send(data)
 
     def run(self) -> None:
         """
@@ -103,13 +113,20 @@ class DHTaskProcess(multiprocessing.Process):
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
-            try:
-                task = self.task_queue.get(timeout=0.2)
-                # do
-                self.task_queue.task_done()
-            except queue.Empty:
-                if self._stopevent.is_set():
-                    break
+            if not self.task_pipe.poll(timeout=0.2):
+                break
+            with self.lock:
+                task = self.task_pipe.recv()
+            # TODO ---- Dummy ops for now, for testing
+            self.message({
+                "idx": task.get("idx"),
+                "text": "Doing a thing: {t}".format(t=task.get("task")),
+            })
+            time.sleep(random.random() * 5.0)
+            self.message({
+                "idx": task.get("idx"),
+                "text": "Thing done: {t}".format(t=task.get("task")),
+            })
 
     def stop(self) -> None:
         """Stop the task process operations"""
@@ -118,11 +135,12 @@ class DHTaskProcess(multiprocessing.Process):
 
 class DHResultThread(threading.Thread):
 
-    def __init__(self, result_queue):
+    def __init__(self, lock, result_pipe):
         super().__init__(daemon=True)
         self._stopevent = threading.Event()
         self.result = []
-        self.result_queue = result_queue
+        self.lock = lock
+        self.result_pipe = result_pipe
 
     def run(self) -> None:
         """
@@ -130,12 +148,13 @@ class DHResultThread(threading.Thread):
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
-            try:
-                self.result.append(self.result_queue.get(timeout=0.2))
-                self.result_queue.task_done()
-            except queue.Empty:
+            if not self.result_pipe.poll(timeout=0.2):
                 if self._stopevent.is_set():
                     break
+                continue
+            with self.lock:
+                result = self.result_pipe.recv()
+            self.result.append(result)
 
     def stop(self) -> None:
         """Stop the result thread operations"""
@@ -148,12 +167,12 @@ class DHMessageThread(threading.Thread):
             self,
             lock: multiprocessing.RLock,
             screen: Overwriteable,
-            message_queue: multiprocessing.JoinableQueue):
+            message_pipe):
         super().__init__(daemon=True)
         self._stopevent = threading.Event()
         self.lock = lock
         self.screen = screen
-        self.message_queue = message_queue
+        self.message_pipe = message_pipe
 
     def handle_message(self, task: dict) -> None:
         """Handle an incoming message from the message queue
@@ -174,12 +193,12 @@ class DHMessageThread(threading.Thread):
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
-            try:
-                self.handle_message(self.message_queue.get(timeout=0.2))
-                self.message_queue.task_done()
-            except queue.Empty:
-                if self._stopevent.is_set():
-                    break
+            if self.message_pipe.poll(timeout=0.2):
+                with self.lock:
+                    text = self.message_pipe.recv()
+                self.handle_message(text)
+            if self._stopevent.is_set():
+                break
 
     def stop(self) -> None:
         """Stop the message thread operations"""
@@ -190,15 +209,29 @@ class DownloadHandler:
     """
     """
 
+    # TODO
+    ytdlp_options = {
+        "format": "bestvideo[height<=720][fps<=60]+bestaudio",
+        "outtmpl": "TESTING/%(uploader)s__%(title)%s.%(ext)s",
+    }
+
     def __init__(self, video_data: list):
         self.lock = multiprocessing.RLock()
         self.screen = Overwriteable()
-        self.message_queue = multiprocessing.JoinableQueue()
+        (self.message_pipe_r, self.message_pipe_s) = multiprocessing.Pipe()
         self.message_thread = DHMessageThread(
             self.lock,
             self.screen,
-            self.message_queue)
+            self.message_pipe_r)
         self.video_data = video_data
+
+    def message(self, data: dict) -> None:
+        """Send a message via the instance message pipe
+
+        @param data Dict of data for the message; `text` and, optionally, `idx`
+        """
+        with self.lock:
+            self.message_pipe_s.send(data)
 
     def run(self) -> None:
         """
@@ -206,14 +239,50 @@ class DownloadHandler:
         self.message_thread.start()
         l = len(self.video_data)
         if l == 0:
-            self.message_queue.put({
+            self.message({
                 "idx": 0,
                 "text": "No video data provided",
             })
-            self.message_thread.stop()
-            self.message_queue.join()
-            self.message_thread.join()
+            self.stop()
             return
+        s = "" if l == 1 else "s"
+        self.message({
+            "idx": 0,
+            "text": f"Received {l} video ID{s}",
+        })
+        (task_pipe_r, task_pipe_s) = multiprocessing.Pipe()
+        (result_pipe_r, result_pipe_s) = multiprocessing.Pipe()
+        for (i, v) in enumerate(self.video_data):
+            task_pipe_s.send({ "idx": i + 1, "task": v, })
+            self.message({
+                "idx": i + 1,
+                "text": f"{v}: Pending",
+            })
+        self.result_thread = DHResultThread(self.lock, result_pipe_r)
+        task_processes = []
+        for i in range(0, 2):  # TODO: Un-hardcode this
+            task_processes.append(
+                DHTaskProcess(
+                    self.lock,
+                    task_pipe_r,
+                    self.message_pipe_s,
+                    self.ytdlp_options.copy()))
+        for t in task_processes:
+            t.start()
+        for t in task_processes:
+            t.join()
+        self.message({
+            "idx": len(self.video_data) + 1,
+            "text": "Operations complete",
+        })
+        self.stop()
+
+    def stop(self) -> None:
+        """Stop the instance message handlers"""
+        self.message_thread.stop()
+        self.message_thread.join()
+        self.message_pipe_r.close()
+        self.message_pipe_s.close()
 
 
 # Main function
@@ -221,7 +290,7 @@ class DownloadHandler:
 
 
 def main():
-    dh = DownloadHandler([])
+    dh = DownloadHandler([1, 2, 3, 4, 5])
     dh.run()
 
 
