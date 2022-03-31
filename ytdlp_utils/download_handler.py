@@ -5,7 +5,6 @@
 # -----------------------------------------------------------------------------
 
 
-import multiprocessing
 import queue
 import random
 import threading
@@ -181,11 +180,11 @@ class DHMessageThread(threading.Thread):
         self._stopevent.set()
 
 
-class DHTaskProcess(multiprocessing.Process):
+class DHTaskThread(threading.Thread):
 
     def __init__(self, task_queue, message_queue):
         super().__init__(daemon=True)
-        self._stopevent = multiprocessing.Event()
+        self._stopevent = threading.Event()
         self.task_queue = task_queue
         self.message_queue = message_queue
 
@@ -246,7 +245,7 @@ class DownloadHandler:
     def __init__(self, video_ids: list, processes: int = 1):
         self.lock = threading.Lock()
         self.screen = Overwriteable()
-        self.message_queue = multiprocessing.JoinableQueue()
+        self.message_queue = queue.Queue()
         self.message_thread = DHMessageThread(
             self.lock,
             self.screen,
@@ -281,7 +280,7 @@ class DownloadHandler:
             "idx": 0,
             "text": f"\033[1;32m✓\033[m Downloading {l} video{s}",
         })
-        task_queue = multiprocessing.JoinableQueue()
+        task_queue = queue.Queue()
         for (idx, vid) in enumerate(self.videos):
             vid.update({ "idx": idx + 1, })  # Hardcoded offset
             task_queue.put(vid)
@@ -292,7 +291,7 @@ class DownloadHandler:
         workers = []
         for _ in range(0, self.processes):
             workers.append(
-                DHTaskProcess(
+                DHTaskThread(
                     task_queue,
                     self.message_queue))
         for w in workers:
