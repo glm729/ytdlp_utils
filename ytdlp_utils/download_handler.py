@@ -12,7 +12,6 @@ import threading
 import time
 
 from overwriteable import Overwriteable
-from status_line import StatusLine
 
 
 # Function definitions
@@ -31,20 +30,49 @@ def store_video_data(video_ids) -> list:
     @return List of dicts; Video and StatusLine per video ID provided
     """
     pw = max(map(len, video_ids))
+    prefix = "\033[33m?\033[m"
+    body = "\033[30mPending\033[m"
     output = []
-    for video_id in video_ids:
-        data = {
-            "main": f"\033[35m{video_id}\033[m",
-            "prefix": "\033[33m?\033[m",
-            "suffix": "\033[30mPending\033[m",
-            "pw": pw,
-        }
-        output.append({ "video": Video(), "status": StatusLine(**data), })
+    for vid in video_ids:
+        header = "\033[35m{t}\033[m".format(t=vid.ljust(pw, " "))
+        output.append({
+            "status": Status(prefix, header, body),
+            "video": Video(),
+        })
     return output
 
 
 # Class definitions
 # -----------------------------------------------------------------------------
+
+
+class Status:
+    """
+    """
+
+    def __init__(self, prefix: str, header: str, body: str):
+        self.update({
+            "prefix": prefix,
+            "header": header,
+            "body": body,
+        })
+
+    def _build(self) -> None:
+        """
+        """
+        self.status = "{p} {h} {b}".format(
+            p=self.prefix,
+            h=self.header,
+            b=self.body)
+
+    def update(self, data: dict) -> None:
+        """
+        """
+        for (k, v) in data.items():
+            if not k in ["prefix", "header", "body"]:
+                continue
+            setattr(self, k, v)
+        self._build()
 
 
 class Video:
@@ -108,117 +136,100 @@ class Logger:
         pass
 
 
-class DHTaskProcess(multiprocessing.Process):
+class DHMessageThread(threading.Thread):
 
-    def __init__(
-            self,
-            lock: multiprocessing.Lock,
-            task_queue: multiprocessing.JoinableQueue,
-            message_pipe,
-            ytdlp_options: dict):
-        super().__init__(daemon=True)
-        self.lock = lock
-        self.task_queue = task_queue
-        self.message_pipe = message_pipe
-        self.ytdlp_options = ytdlp_options
-
-    def message(self, data: dict) -> None:
-        """
-        """
-        with self.lock:
-            self.message_pipe.send(data)
-
-    def run(self) -> None:
-        """
-        """
-        while True:
-            try:
-                task = self.task_queue.get(block=False)
-                # TODO ---- Dummy ops for now, for testing
-                task.get("status").set_suffix("Doing a thing")
-                self.message({
-                    "idx": task.get("idx"),
-                    "text": task.get("status").text,
-                })
-                time.sleep(random.random() * 5.0)
-                task.get("status").set_suffix("Thing done")
-                self.message({
-                    "idx": task.get("idx"),
-                    "text": task.get("status").text,
-                })
-                self.task_queue.task_done()
-            except queue.Empty:
-                break
-
-
-class DHResultThread(threading.Thread):
-
-    def __init__(self, result_queue):
+    def __init__(self, lock, screen, message_queue):
         super().__init__(daemon=True)
         self._stopevent = threading.Event()
-        self.result = []
-        self.result_queue = result_queue
+        self.lock = lock
+        self.screen = screen
+        self.message_queue = message_queue
+
+    def handle_message(self, task: dict) -> None:
+        """Handle an incoming message using the given dataset
+
+        @param task Message data, containing message text and (optionally)
+        message index
+        """
+        method = "add_line"
+        if (idx := task.get("idx", None)) is not None:
+            if idx < len(self.screen.content):
+                method = "replace_line"
+        with self.lock:
+            getattr(self.screen, method)(**task)
+            self.screen.flush()
 
     def run(self) -> None:
-        """
+        """Run the message thread operations
+
+        Handles getting tasks from the queue and passing to the message handler
+        method.
         """
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
             try:
-                result = self.result_queue.get(timeout=0.2)
-                self.result.append(result)
-                self.result_queue.task_done()
+                task = self.message_queue.get(timeout=0.2)
+                self.handle_message(task)
+                self.message_queue.task_done()
             except queue.Empty:
                 if self._stopevent.is_set():
                     break
 
     def stop(self) -> None:
-        """Stop the result thread operations"""
+        """Stop the message thread operations"""
         self._stopevent.set()
 
 
-class DHMessageThread(threading.Thread):
+class DHTaskProcess(multiprocessing.Process):
 
-    def __init__(
-            self,
-            lock: multiprocessing.Lock,
-            screen: Overwriteable,
-            message_pipe):
+    def __init__(self, task_queue, message_queue):
         super().__init__(daemon=True)
-        self._stopevent = threading.Event()
-        self.lock = lock
-        self.screen = screen
-        self.message_pipe = message_pipe
+        self._stopevent = multiprocessing.Event()
+        self.task_queue = task_queue
+        self.message_queue = message_queue
 
-    def handle_message(self, task: dict) -> None:
-        """Handle an incoming message from the message queue
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
 
-        @param task Task data pulled from the message queue
+        @param data Dict of message data
         """
-        m = "add_line"
-        if (idx := task.get("idx", None)) is not None:
-            if idx < len(self.screen.content):
-                m = "replace_line"
-        with self.lock:
-            getattr(self.screen, m)(**task)
-            self.screen.flush()
+        self.message_queue.put(data)
+
+    def process(self, task: dict) -> None:
+        """
+        """
+        task.get("status").update({ "body": "Doing a thing", })
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
+        time.sleep(random.random() * 4.0)
+        task.get("status").update({ "body": "Thing done", })
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
 
     def run(self) -> None:
-        """
+        """Run task thread operations
+
+        Effectively a handler to loop for collecting tasks and running the
+        class `process` method.
         """
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
-            if self.message_pipe.poll(timeout=0.2):
-                with self.lock:
-                    text = self.message_pipe.recv()
-                self.handle_message(text)
-            if self._stopevent.is_set():
-                break
+            try:
+                task = self.task_queue.get(timeout=0.2)
+                self.process(task)
+                self.task_queue.task_done()
+            except queue.Empty:
+                if self._stopevent.is_set():
+                    break
 
     def stop(self) -> None:
-        """Stop the message thread operations"""
+        """Stop the task handler operations"""
         self._stopevent.set()
 
 
@@ -232,79 +243,72 @@ class DownloadHandler:
         "outtmpl": "TESTING/%(uploader)s__%(title)s__%(id)s.%(ext)s",
     }
 
-    def __init__(self, video_ids: list, n_procs: int = 1):
-        self.lock = multiprocessing.Lock()
+    def __init__(self, video_ids: list, processes: int = 1):
+        self.lock = threading.Lock()
         self.screen = Overwriteable()
-        (self.message_pipe_r, self.message_pipe_s) = multiprocessing.Pipe()
+        self.message_queue = multiprocessing.JoinableQueue()
         self.message_thread = DHMessageThread(
             self.lock,
             self.screen,
-            self.message_pipe_r)
-        self.n_procs = n_procs
-        self.video_data = store_video_data(video_ids)
+            self.message_queue)
+        self.videos = store_video_data(video_ids)
+        self.processes = processes
 
     def message(self, data: dict) -> None:
-        """Send a message via the instance message pipe
+        """Put a message on the instance message queue
 
-        @param data Dict of data for the message; `text` and, optionally, `idx`
+        @param data Dict of data for the message handler
         """
-        with self.lock:
-            self.message_pipe_s.send(data)
+        self.message_queue.put(data)
 
     def run(self) -> None:
-        """
+        """Run the multipush handler operations
+
+        Starts the message handler.  Exits early if no branches are provided.
+        Fills task queue and prepares task threads.  Starts task threads and
+        marks all for stopping on an empty queue.  Joins the task queue to wait
+        until all tasks are complete.  Joins the task threads.  Stops the
+        instance message handlers.
         """
         self.message_thread.start()
-        l = len(self.video_data)
+        l = len(self.videos)
         if l == 0:
-            self.message({
-                "idx": 0,
-                "text": "No video data provided",
-            })
+            self.message({ "idx": 0, "text": "No video IDs provided", })
             self.stop()
             return
         s = "" if l == 1 else "s"
         self.message({
             "idx": 0,
-            "text": f"Received {l} video ID{s}",
+            "text": f"\033[1;32m✓\033[m Downloading {l} video{s}",
         })
         task_queue = multiprocessing.JoinableQueue()
-        result_queue = multiprocessing.JoinableQueue()
-        for (i, v) in enumerate(self.video_data):
-            v.update({ "idx": i + 1, })  # Hardcoded line offset
-            task_queue.put(v)
+        for (idx, vid) in enumerate(self.videos):
+            vid.update({ "idx": idx + 1, })  # Hardcoded offset
+            task_queue.put(vid)
             self.message({
-                "idx": v.get("idx"),
-                "text": v.get("status").text,
+                "idx": vid.get("idx"),
+                "text": vid.get("status").status,
             })
-        # result_thread = DHResultThread(result_queue)
-        task_processes = []
-        for _ in range(0, self.n_procs):
-            task_processes.append(
+        workers = []
+        for _ in range(0, self.processes):
+            workers.append(
                 DHTaskProcess(
-                    self.lock,
                     task_queue,
-                    self.message_pipe_s,
-                    self.ytdlp_options.copy()))
-        for t in task_processes:
-            t.start()
-        task_queue.join()  # Unblock when all tasks are done
-        for t in task_processes:
-            t.join(0)  # Hard join -- no more tasks at this stage
-        # result_thread.join()
-        # result = result_thread.result
-        self.message({
-            "idx": len(self.video_data) + 1,  # Hardcoded line offset
-            "text": "Operations complete",
-        })
+                    self.message_queue))
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.stop()
+        task_queue.join()
+        for w in workers:
+            w.join()
         self.stop()
 
     def stop(self) -> None:
         """Stop the instance message handlers"""
+        self.message_queue.join()
         self.message_thread.stop()
         self.message_thread.join()
-        self.message_pipe_r.close()
-        self.message_pipe_s.close()
 
 
 # Main function
@@ -312,11 +316,13 @@ class DownloadHandler:
 
 
 def main():
-    dh = DownloadHandler([
-        "BpgGXvw-ZLE",
-        "1IDfoTxFNg0",
-        "YikfKLxfRYI",
-    ])
+    dh = DownloadHandler(
+        [
+            "BpgGXvw-ZLE",
+            "1IDfoTxFNg0",
+            "YikfKLxfRYI",
+        ],
+        processes=2)
     dh.run()
 
 
