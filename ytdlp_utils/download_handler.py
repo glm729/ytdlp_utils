@@ -41,13 +41,12 @@ def store_video_data(video_ids) -> list:
     return output
 
 
-# Class definitions
+# Auxiliary class definitions
 # -----------------------------------------------------------------------------
 
 
 class Status:
-    """
-    """
+    """Collect data relating to the status of an item"""
 
     def __init__(self, prefix: str, header: str, body: str):
         self.update({
@@ -57,7 +56,9 @@ class Status:
         })
 
     def _build(self) -> None:
-        """
+        """Build the status text
+
+        Currently does not handle missing attributes.
         """
         self.status = "{p} {h} {b}".format(
             p=self.prefix,
@@ -65,7 +66,11 @@ class Status:
             b=self.body)
 
     def update(self, data: dict) -> None:
-        """
+        """Update the status data
+
+        Builds the text after assignments.
+
+        @param data Dict of data to use for updating status
         """
         for (k, v) in data.items():
             if not k in ["prefix", "header", "body"]:
@@ -129,10 +134,24 @@ class Logger:
         """
         pass
 
+    def error(self, m: str) -> None:
+        """
+        """
+        pass
+
     def info(self, m: str) -> None:
         """
         """
         pass
+
+    def warning(self, m: str) -> None:
+        """
+        """
+        pass
+
+
+# DownloadHandler class definitions
+# -----------------------------------------------------------------------------
 
 
 class DHMessageThread(threading.Thread):
@@ -242,7 +261,7 @@ class DownloadHandler:
         "outtmpl": "TESTING/%(uploader)s__%(title)s__%(id)s.%(ext)s",
     }
 
-    def __init__(self, video_ids: list, processes: int = 1):
+    def __init__(self, video_ids: list, threads: int = 1):
         self.lock = threading.Lock()
         self.screen = Overwriteable()
         self.message_queue = queue.Queue()
@@ -251,7 +270,7 @@ class DownloadHandler:
             self.screen,
             self.message_queue)
         self.videos = store_video_data(video_ids)
-        self.processes = processes
+        self.threads = threads
 
     def message(self, data: dict) -> None:
         """Put a message on the instance message queue
@@ -289,7 +308,7 @@ class DownloadHandler:
                 "text": vid.get("status").status,
             })
         workers = []
-        for _ in range(0, self.processes):
+        for _ in range(0, self.threads):
             workers.append(
                 DHTaskThread(
                     task_queue,
@@ -321,7 +340,7 @@ def main():
             "1IDfoTxFNg0",
             "YikfKLxfRYI",
         ],
-        processes=2)
+        threads=2)
     dh.run()
 
 
