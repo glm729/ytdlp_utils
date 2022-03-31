@@ -12,13 +12,35 @@ import threading
 import time
 
 from overwriteable import Overwriteable
+from status_line import StatusLine
 
 
 # Function definitions
 # -----------------------------------------------------------------------------
 
 
+def store_video_data(video_ids) -> list:
+    """Prepare a default set of data for each video ID
 
+    - Produce list of output data:
+      - { "video": Video(), "status": StatusLine(...), }
+    - Mutate data later with attr `idx`:
+      - task.update({ "idx": i + 1, })
+
+    @param video_ids List or tuple of video IDs to store
+    @return List of dicts; Video and StatusLine per video ID provided
+    """
+    pw = max(map(len, video_ids))
+    output = []
+    for video_id in video_ids:
+        data = {
+            "main": f"\033[35m{video_id}\033[m",
+            "prefix": "\033[33m?\033[m",
+            "suffix": "\033[30mPending\033[m",
+            "pw": pw,
+        }
+        output.append({ "video": Video(), "status": StatusLine(**data), })
+    return output
 
 
 # Class definitions
@@ -95,7 +117,6 @@ class DHTaskProcess(multiprocessing.Process):
             message_pipe,
             ytdlp_options: dict):
         super().__init__(daemon=True)
-        self._stopevent = multiprocessing.Event()
         self.lock = lock
         self.task_queue = task_queue
         self.message_pipe = message_pipe
@@ -110,28 +131,24 @@ class DHTaskProcess(multiprocessing.Process):
     def run(self) -> None:
         """
         """
-        if self._stopevent.is_set():
-            self._stopevent.clear()
         while True:
             try:
-                task = self.task_queue.get(timeout=0.2)
+                task = self.task_queue.get(block=False)
                 # TODO ---- Dummy ops for now, for testing
+                task.get("status").set_suffix("Doing a thing")
                 self.message({
                     "idx": task.get("idx"),
-                    "text": "Doing a thing: {t}".format(t=task.get("task")),
+                    "text": task.get("status").text,
                 })
                 time.sleep(random.random() * 5.0)
+                task.get("status").set_suffix("Thing done")
                 self.message({
                     "idx": task.get("idx"),
-                    "text": "Thing done: {t}".format(t=task.get("task")),
+                    "text": task.get("status").text,
                 })
                 self.task_queue.task_done()
             except queue.Empty:
                 break
-
-    def stop(self) -> None:
-        """Stop the task process operations"""
-        self._stopevent.set()
 
 
 class DHResultThread(threading.Thread):
@@ -212,10 +229,10 @@ class DownloadHandler:
     # TODO
     ytdlp_options = {
         "format": "bestvideo[height<=720][fps<=60]+bestaudio",
-        "outtmpl": "TESTING/%(uploader)s__%(title)%s.%(ext)s",
+        "outtmpl": "TESTING/%(uploader)s__%(title)s__%(id)s.%(ext)s",
     }
 
-    def __init__(self, video_data: list):
+    def __init__(self, video_ids: list, n_procs: int = 1):
         self.lock = multiprocessing.Lock()
         self.screen = Overwriteable()
         (self.message_pipe_r, self.message_pipe_s) = multiprocessing.Pipe()
@@ -223,7 +240,8 @@ class DownloadHandler:
             self.lock,
             self.screen,
             self.message_pipe_r)
-        self.video_data = video_data
+        self.n_procs = n_procs
+        self.video_data = store_video_data(video_ids)
 
     def message(self, data: dict) -> None:
         """Send a message via the instance message pipe
@@ -253,14 +271,15 @@ class DownloadHandler:
         task_queue = multiprocessing.JoinableQueue()
         result_queue = multiprocessing.JoinableQueue()
         for (i, v) in enumerate(self.video_data):
-            task_queue.put({ "idx": i + 1, "task": v, })
+            v.update({ "idx": i + 1, })  # Hardcoded line offset
+            task_queue.put(v)
             self.message({
-                "idx": i + 1,
-                "text": f"{v}: Pending",
+                "idx": v.get("idx"),
+                "text": v.get("status").text,
             })
-        self.result_thread = DHResultThread(result_queue)
+        # result_thread = DHResultThread(result_queue)
         task_processes = []
-        for i in range(0, 2):  # TODO: Un-hardcode this
+        for _ in range(0, self.n_procs):
             task_processes.append(
                 DHTaskProcess(
                     self.lock,
@@ -269,10 +288,13 @@ class DownloadHandler:
                     self.ytdlp_options.copy()))
         for t in task_processes:
             t.start()
+        task_queue.join()  # Unblock when all tasks are done
         for t in task_processes:
-            t.join()
+            t.join(0)  # Hard join -- no more tasks at this stage
+        # result_thread.join()
+        # result = result_thread.result
         self.message({
-            "idx": len(self.video_data) + 1,
+            "idx": len(self.video_data) + 1,  # Hardcoded line offset
             "text": "Operations complete",
         })
         self.stop()
@@ -290,7 +312,11 @@ class DownloadHandler:
 
 
 def main():
-    dh = DownloadHandler([1, 2, 3, 4, 5, 6, 7])
+    dh = DownloadHandler([
+        "BpgGXvw-ZLE",
+        "1IDfoTxFNg0",
+        "YikfKLxfRYI",
+    ])
     dh.run()
 
 
