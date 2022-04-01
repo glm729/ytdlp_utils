@@ -9,6 +9,7 @@ import queue
 import random
 import threading
 import time
+import yt_dlp
 
 from overwriteable import Overwriteable
 
@@ -36,7 +37,7 @@ def store_video_data(video_ids) -> list:
         header = "\033[35m{t}\033[m".format(t=vid.ljust(pw, " "))
         output.append({
             "status": Status(prefix, header, body),
-            "video": Video(),
+            "video": Video(vid),
         })
     return output
 
@@ -93,7 +94,8 @@ class Video:
         1: "Audio",
     }
 
-    def __init__(self):
+    def __init__(self, video_id: str):
+        self.id = video_id
         self.progress = {
             0: 0.0,
             1: 0.0,
@@ -126,28 +128,72 @@ class Logger:
     Sinks most messages, and updates status of the instance video.
     """
 
-    def __init__(self, video: Video):
-        self.video = video
+    def __init__(self, task: dict, message_queue: queue.Queue):
+        self.task = task
+        self.message_queue = message_queue
+        self._status_last_update = time.time()
+        # DEBUG ----
+        self._count = {
+            "debug": 0,
+            "error": 0,
+            "info": 0,
+            "warning": 0,
+        }
+
+    def _message(self, data: dict) -> None:
+        """
+        """
+        self.message_queue.put(data)
+
+    def _update(self) -> None:
+        """
+        """
+        self._message({
+            "idx": self.task.get("idx"),
+            "text": self.task.get("status").status,
+        })
 
     def debug(self, m: str) -> None:
         """
         """
-        pass
+        self._count.update({ "debug": self._count.get("debug") + 1, })
+        self.task.get("status").update({
+            "body": "Received debug message {n}".format(
+                n=self._count.get("debug")),
+        })
+        self._update()
+        # TODO:
+        # -- In here is where the _last_update messages go
 
     def error(self, m: str) -> None:
         """
         """
-        pass
+        self._count.update({ "error": self._count.get("error") + 1, })
+        self.task.get("status").update({
+            "body": "Received error message {n}".format(
+                n=self._count.get("error")),
+        })
+        self._update()
 
     def info(self, m: str) -> None:
         """
         """
-        pass
+        self._count.update({ "info": self._count.get("info") + 1, })
+        self.task.get("status").update({
+            "body": "Received info message {n}".format(
+                n=self._count.get("info")),
+        })
+        self._update()
 
     def warning(self, m: str) -> None:
         """
         """
-        pass
+        self._count.update({ "warning": self._count.get("warning") + 1, })
+        self.task.get("status").update({
+            "body": "Received warning message {n}".format(
+                n=self._count.get("warning")),
+        })
+        self._update()
 
 
 # DownloadHandler class definitions
@@ -215,15 +261,26 @@ class DHTaskThread(threading.Thread):
         self.message_queue.put(data)
 
     def process(self, task: dict) -> None:
+        """Process the current video download
+
+        @param task Dict of data for the current task
         """
-        """
-        task.get("status").update({ "body": "Doing a thing", })
+        task.get("status").update({
+            "body": "Starting",
+        })
         self.message({
             "idx": task.get("idx"),
             "text": task.get("status").status,
         })
-        time.sleep(random.random() * 4.0)
-        task.get("status").update({ "body": "Thing done", })
+
+        task.get("ytdlp_options").update({
+            "logger": Logger(task, self.message_queue),
+        })
+
+        with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
+            yt.download((task.get("video").id,))
+
+        task.get("status").update({ "body": "Done", })
         self.message({
             "idx": task.get("idx"),
             "text": task.get("status").status,
@@ -301,7 +358,10 @@ class DownloadHandler:
         })
         task_queue = queue.Queue()
         for (idx, vid) in enumerate(self.videos):
-            vid.update({ "idx": idx + 1, })  # Hardcoded offset
+            vid.update({
+                "idx": idx + 1,  # Hardcoded offset
+                "ytdlp_options": self.ytdlp_options.copy(),
+            })
             task_queue.put(vid)
             self.message({
                 "idx": vid.get("idx"),
