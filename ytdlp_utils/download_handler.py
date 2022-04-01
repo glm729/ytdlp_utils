@@ -46,6 +46,60 @@ def store_video_data(video_ids) -> list:
 # -----------------------------------------------------------------------------
 
 
+class ProgressHook:
+
+    def __init__(self, task, message_queue):
+        self._last_update = time.time()
+        self.task = task
+        self.message_queue = message_queue
+
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
+
+        @param data Message data
+        """
+        self.message_queue.put(data)
+
+    def check_percentage(self, num, den) -> None:
+        """
+        """
+        pc = round((num / den) * 100, 1)
+        self.task.get("video").set_progress(pc)
+        if time.time() > (self._last_update + 0.333):
+            self.task.get("status").update({
+                "body": "Downloading {s}  {p}%".format(
+                    s=self.task.get("video").get_stage_text(lower=True),
+                    p=str(pc).rjust(5, " ")),
+            })
+            self.message({
+                "idx": self.task.get("idx"),
+                "text": self.task.get("status").status,
+            })
+        self._last_update = time.time()
+
+    def downloading(self, data: dict) -> None:
+        """
+        """
+        if not data.get("status") == "downloading":
+            return
+        if data.get("info_dict").get("fragments", None) is not None:
+            if not self.task.get("video").dash_notified:
+                pass
+            num = data.get("fragment_index")
+            den = data.get("fargment_count")
+        else:
+            num = data.get("downloaded_bytes")
+            den = data.get("total_bytes")
+        self.check_percentage(num, den)
+
+    def finished(self, data: dict) -> None:
+        """
+        """
+        if not data.get("status") == "finished":
+            return
+        # TODO? ----
+
+
 class Status:
     """Collect data relating to the status of an item"""
 
@@ -100,6 +154,13 @@ class Video:
             0: 0.0,
             1: 0.0,
         }
+        self.stage = None
+
+    def get_stage_text(self, lower: bool = False) -> str:
+        """
+        """
+        t = self._stage.get(self.stage)
+        return t.lower() if lower else t
 
     def set_progress(self, percentage: float) -> None:
         """Set the progress for the current download stage
@@ -128,6 +189,16 @@ class Logger:
     Sinks most messages, and updates status of the instance video.
     """
 
+    _skip_hints = (
+        "[dashsegments]",
+        "[info]",
+        "[youtube]",
+        "Deleting original file")
+
+    _warn_mkv = ''.join((
+        "Requested formats are incompatible for merge ",
+        "and will be merged into mkv"))
+
     def __init__(self, task: dict, message_queue: queue.Queue):
         self.task = task
         self.message_queue = message_queue
@@ -154,19 +225,44 @@ class Logger:
         })
 
     def debug(self, m: str) -> None:
+        """Log debug messages
+
+        @param m Message text
         """
-        """
-        self._count.update({ "debug": self._count.get("debug") + 1, })
-        self.task.get("status").update({
-            "body": "Received debug message {n}".format(
-                n=self._count.get("debug")),
-        })
-        self._update()
-        # TODO:
-        # -- In here is where the _last_update messages go
+        if any(map(lambda x: m.startswith(x), self._skip_hints)):
+            return
+        if m.endswith("has already been downloaded"):
+            self.task.get("status").update({
+                "body": "Video already downloaded",
+            })
+            self._update()
+            return
+        if m.startswith("[Merger]"):
+            self.task.get("status").update({
+                "body": "Merging data",
+            })
+            self._update()
+            return
+        if m.startswith("[download]"):
+            if m.startswith("[download] Destination:"):
+                v = self.task.get("video")
+                # If stage not yet set, set to video and notify
+                if v.stage is None:
+                    v.set_stage(0)
+                # If video, switch to audio
+                elif v.stage == 0:
+                    v.set_stage(1)
+                self.task.get("status").update({
+                    "body": "Downloading {s}".format(
+                        s=v.get_stage_text(lower=True)),
+                })
+                self._update()
+                return
 
     def error(self, m: str) -> None:
-        """
+        """Log error messages
+
+        @param m Message text
         """
         self._count.update({ "error": self._count.get("error") + 1, })
         self.task.get("status").update({
@@ -176,7 +272,9 @@ class Logger:
         self._update()
 
     def info(self, m: str) -> None:
-        """
+        """Log info messages
+
+        @param m Message text
         """
         self._count.update({ "info": self._count.get("info") + 1, })
         self.task.get("status").update({
@@ -186,8 +284,12 @@ class Logger:
         self._update()
 
     def warning(self, m: str) -> None:
+        """Log warning messages
+
+        @param m Message text
         """
-        """
+        if m == self._warn_mkv:
+            return
         self._count.update({ "warning": self._count.get("warning") + 1, })
         self.task.get("status").update({
             "body": "Received warning message {n}".format(
@@ -273,8 +375,13 @@ class DHTaskThread(threading.Thread):
             "text": task.get("status").status,
         })
 
+        progress_hook = ProgressHook(task, self.message_queue)
+
         task.get("ytdlp_options").update({
             "logger": Logger(task, self.message_queue),
+            "progress_hooks": [
+                progress_hook.downloading,
+            ],
         })
 
         with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
