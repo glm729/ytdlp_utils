@@ -7,20 +7,13 @@
 
 import queue
 import sys
-import threading
-import time
 import yt_dlp
 
-from download_handler import Logger
-from download_handler import ProgressHook
 from download_handler import Status
 from download_handler import Video
 
-from download_handler import DHMessageThread
 from download_handler import DHTaskThread
 from download_handler import DownloadHandler
-
-from overwriteable import Overwriteable
 
 
 # Function definitions
