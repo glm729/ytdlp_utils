@@ -1,30 +1,197 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.10
 
 
 # Module imports
 # -----------------------------------------------------------------------------
 
 
+import queue
+import random
+import threading
 import time
 import yt_dlp
 
-from message_handler import MessageHandler
-from video import Video
+from overwriteable import Overwriteable
 
 
-# Custom exceptions
+# Function definitions
 # -----------------------------------------------------------------------------
 
 
-class DownloadTooSlow(Exception):
-    pass
+def store_video_data(video_ids) -> list:
+    """Prepare a default set of data for each video ID
+
+    - Produce list of output data:
+      - { "video": Video(), "status": StatusLine(...), }
+    - Mutate data later with attr `idx`:
+      - task.update({ "idx": i + 1, })
+
+    @param video_ids List or tuple of video IDs to store
+    @return List of dicts; Video and StatusLine per video ID provided
+    """
+    pw = max(map(len, video_ids))
+    prefix = "\033[33m?\033[m"
+    body = "\033[30mPending\033[m"
+    output = []
+    for vid in video_ids:
+        header = "\033[35m{t}\033[m".format(t=vid.ljust(pw, " "))
+        output.append({
+            "status": Status(prefix, header, body),
+            "video": Video(vid),
+        })
+    return output
 
 
-# Support class definitions
+# Auxiliary class definitions
 # -----------------------------------------------------------------------------
 
 
-class CustomLogger:
+class ProgressHook:
+
+    def __init__(self, task, message_queue):
+        self._last_update = time.time()
+        self.task = task
+        self.message_queue = message_queue
+
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
+
+        @param data Message data
+        """
+        self.message_queue.put(data)
+
+    def check_percentage(self, num, den) -> None:
+        """
+        """
+        pc = round((num / den) * 100, 1)
+        self.task.get("video").set_progress(pc)
+        if time.time() > (self._last_update + 0.333):
+            self.task.get("status").update({
+                "body": "Downloading {s}  {p}%".format(
+                    s=self.task.get("video").get_stage_text(lower=True),
+                    p=str(pc).rjust(5, " ")),
+            })
+            self.message({
+                "idx": self.task.get("idx"),
+                "text": self.task.get("status").status,
+            })
+        self._last_update = time.time()
+
+    def downloading(self, data: dict) -> None:
+        """
+        """
+        if not data.get("status") == "downloading":
+            return
+        if data.get("info_dict").get("fragments", None) is not None:
+            if not self.task.get("video").dash_notified:
+                pass
+            num = data.get("fragment_index")
+            den = data.get("fargment_count")
+        else:
+            num = data.get("downloaded_bytes")
+            den = data.get("total_bytes")
+        self.check_percentage(num, den)
+
+    def finished(self, data: dict) -> None:
+        """
+        """
+        if not data.get("status") == "finished":
+            return
+        # TODO? ----
+
+
+class Status:
+    """Collect data relating to the status of an item"""
+
+    def __init__(self, prefix: str, header: str, body: str):
+        self.update({
+            "prefix": prefix,
+            "header": header,
+            "body": body,
+        })
+
+    def _build(self) -> None:
+        """Build the status text
+
+        Currently does not handle missing attributes.
+        """
+        self.status = "{p} {h} {b}".format(
+            p=self.prefix,
+            h=self.header,
+            b=self.body)
+
+    def update(self, data: dict) -> None:
+        """Update the status data
+
+        Builds the text after assignments.
+
+        @param data Dict of data to use for updating status
+        """
+        for (k, v) in data.items():
+            if not k in ["prefix", "header", "body"]:
+                continue
+            setattr(self, k, v)
+        self._build()
+
+
+class Video:
+    """Class to collect and handle data for each video download
+
+    Needs to be able to store required info about the video itself, download
+    stage, download completion, and possibly additional info such as what index
+    it is at in the screen content to push an update, or some other unique
+    identifier such as that.
+    """
+
+    _stage = {
+        0: "Video",
+        1: "Audio",
+    }
+
+    def __init__(self, video_id: str):
+        self.already_downloaded = False
+        self.id = video_id
+        self.progress = {
+            0: 0.0,
+            1: 0.0,
+        }
+        self.stage = None
+
+    def get_stage_text(self, lower: bool = False) -> str:
+        """Get the text representing the current stage
+
+        @param lower Should the text be returned as lowercase?
+        @return "Video" or "Audio", optionally lowercase
+        """
+        t = self._stage.get(self.stage)
+        return t.lower() if lower else t
+
+    def set_progress(self, percentage: float) -> None:
+        """Set the progress for the current download stage
+
+        Updates the progress according to the current download stage.
+
+        @param percentage Percentage completion of the current download
+        """
+        self.progress.update({ self.stage: percentage, })
+
+    def set_stage(self, stage: int) -> None:
+        """Set the video download stage
+
+        Stage must only be 0 or 1 -- video or audio.
+
+        @param stage Download stage: 0 == video, 1 == audio
+        """
+        if not stage in [0, 1]:
+            raise RuntimeError("Stage must only be 0 or 1")
+        self.stage = stage
+
+
+class Logger:
+    """Custom logger definition for yt_dlp.YoutubeDL
+
+    Skips most messages, and updates status of the instance video.
+    """
 
     _skip_hints = (
         "[dashsegments]",
@@ -32,321 +199,356 @@ class CustomLogger:
         "[youtube]",
         "Deleting original file")
 
-    _warn_mkv = ''.join((
+    _warn_mkv = "".join((
         "Requested formats are incompatible for merge ",
         "and will be merged into mkv"))
 
-    def __init__(self, handler):
-        self._handler = handler
+    def __init__(self, task: dict, message_queue: queue.Queue):
+        self.task = task
+        self.message_queue = message_queue
+        self._status_last_update = time.time()
+        # DEBUG ----
+        self._count = {
+            "debug": 0,
+            "error": 0,
+            "info": 0,
+            "warning": 0,
+        }
 
-    # ---- Public methods
+    def _message(self, data: dict) -> None:
+        """Put a message on the instance message queue
 
-    def debug(self, msg: str) -> None:
+        @param data Dict of data for the message
+        """
+        self.message_queue.put(data)
+
+    def _update(self) -> None:
+        """Send an update of the current status via the message queue"""
+        self._message({
+            "idx": self.task.get("idx"),
+            "text": self.task.get("status").status,
+        })
+
+    def debug(self, m: str) -> None:
         """Log debug messages
 
-        @param msg Debug message text.
-        """
-        if any(map(lambda x: msg.startswith(x), self._skip_hints)):
-            return
-        cv = self._handler._current_video
-        if msg.endswith("has already been downloaded"):
-            cv.already_downloaded = True
-            return
-        if msg.startswith("[Merger]"):
-            self._message(f"{cv.prefix}: Merging data", "data")
-            return
-        if msg.startswith("[download]"):
-            if msg.startswith("[download] Destination:"):
-                text = "{p}: Downloading {s}".format(
-                    p=cv.prefix,
-                    s=cv.get_stage(lower=True))
-                self._message(text, "info")
-            return
-        self._message(f"DBG: {msg}", "input")
+        Changes text if already downloaded, merging, or changing stage.
 
-    def error(self, msg: str) -> None:
+        @param m Message text
+        """
+        if any(map(lambda x: m.startswith(x), self._skip_hints)):
+            return
+        if m.endswith("has already been downloaded"):
+            self.task.get("video").already_downloaded = True
+            self.task.get("status").update({
+                "prefix": "\033[1;32m✔\033[m",
+                "body": "\033[32mAlready downloaded\033[m",
+            })
+            self._update()
+            return
+        if m.startswith("[Merger]"):
+            self.task.get("status").update({
+                "body": "\033[36mMerging data\033[m",
+            })
+            self._update()
+            return
+        if m.startswith("[download]"):
+            if m.startswith("[download] Destination:"):
+                v = self.task.get("video")
+                # If stage not yet set, set to video and notify
+                if v.stage is None:
+                    v.set_stage(0)
+                # If video, switch to audio
+                elif v.stage == 0:
+                    v.set_stage(1)
+                # Update the status with the current download stage
+                self.task.get("status").update({
+                    "body": "Downloading {s}".format(
+                        s=v.get_stage_text(lower=True)),
+                })
+                self._update()
+                return
+
+    def error(self, m: str) -> None:
         """Log error messages
 
-        @param msg Error message text.
+        @param m Message text
         """
-        self._message(f"ERR: {msg}", "input")
+        self._count.update({ "error": self._count.get("error") + 1, })
+        self.task.get("status").update({
+            "body": "Received error message {n}".format(
+                n=self._count.get("error")),
+        })
+        self._update()
 
-    def info(self, msg: str) -> None:
+    def info(self, m: str) -> None:
         """Log info messages
 
-        @param msg Info message text.
+        @param m Message text
         """
-        self._message(f"INF: {msg}", "input")
+        self._count.update({ "info": self._count.get("info") + 1, })
+        self.task.get("status").update({
+            "body": "Received info message {n}".format(
+                n=self._count.get("info")),
+        })
+        self._update()
 
-    def warning(self, msg: str) -> None:
+    def warning(self, m: str) -> None:
         """Log warning messages
 
-        @param msg Warning message text.
+        Skips the MKV merge message.
+
+        @param m Message text
         """
-        if msg == self._warn_mkv:
+        if m == self._warn_mkv:
             return
-        self._message(f"WRN: {msg}", "input")
-
-    # ---- Private methods
-
-    def _message(self, text: str, form: str) -> None:
-        """Send a message from the logger via the handler
-
-        @param text Message text.
-        @param form Message form.
-        """
-        self._handler._message(text=text, form=form)
+        self._count.update({ "warning": self._count.get("warning") + 1, })
+        self.task.get("status").update({
+            "body": "Received warning message {n}".format(
+                n=self._count.get("warning")),
+        })
+        self._update()
 
 
-# DownloadHandler class definition
+# DownloadHandler class definitions
 # -----------------------------------------------------------------------------
 
 
-class DownloadHandler:
+class DHMessageThread(threading.Thread):
 
-    _ytdlp_defaults = {
+    def __init__(self, lock, screen, message_queue):
+        super().__init__(daemon=True)
+        self._stopevent = threading.Event()
+        self.lock = lock
+        self.screen = screen
+        self.message_queue = message_queue
+
+    def handle_message(self, task: dict) -> None:
+        """Handle an incoming message using the given dataset
+
+        @param task Message data, containing message text and (optionally)
+        message index
+        """
+        method = "add_line"
+        if (idx := task.get("idx", None)) is not None:
+            if idx < len(self.screen.content):
+                method = "replace_line"
+        with self.lock:
+            getattr(self.screen, method)(**task)
+            self.screen.flush()
+
+    def run(self) -> None:
+        """Run the message thread operations
+
+        Handles getting tasks from the queue and passing to the message handler
+        method.
+        """
+        if self._stopevent.is_set():
+            self._stopevent.clear()
+        while True:
+            try:
+                task = self.message_queue.get(timeout=0.2)
+                self.handle_message(task)
+                self.message_queue.task_done()
+            except queue.Empty:
+                if self._stopevent.is_set():
+                    break
+
+    def stop(self) -> None:
+        """Stop the message thread operations"""
+        self._stopevent.set()
+
+
+class DHTaskThread(threading.Thread):
+
+    def __init__(self, task_queue, message_queue):
+        super().__init__(daemon=True)
+        self._stopevent = threading.Event()
+        self.task_queue = task_queue
+        self.message_queue = message_queue
+
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
+
+        @param data Dict of message data
+        """
+        self.message_queue.put(data)
+
+    def process(self, task: dict) -> None:
+        """Process the current video download
+
+        @param task Dict of data for the current task
+        """
+        task.get("status").update({
+            "prefix": "\033[1;33m?\033[m",
+            "body": "Starting",
+        })
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
+
+        progress_hook = ProgressHook(task, self.message_queue)
+
+        task.get("ytdlp_options").update({
+            "logger": Logger(task, self.message_queue),
+            "progress_hooks": [
+                progress_hook.downloading,
+            ],
+        })
+
+        time_start = time.time()
+
+        with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
+            yt.download((task.get("video").id,))
+
+        time_end = time.time()
+
+        if task.get("video").already_downloaded:
+            return
+
+        task.get("status").update({
+            "prefix": "\033[1;32m✔\033[m",
+            "body": "\033[32mDownloaded and merged\033[m in {t}s".format(
+                t=round(time_end - time_start, 1)),
+        })
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
+
+    def run(self) -> None:
+        """Run task thread operations
+
+        Effectively a handler to loop for collecting tasks and running the
+        class `process` method.
+        """
+        if self._stopevent.is_set():
+            self._stopevent.clear()
+        while True:
+            try:
+                task = self.task_queue.get(timeout=0.2)
+                self.process(task)
+                self.task_queue.task_done()
+            except queue.Empty:
+                if self._stopevent.is_set():
+                    break
+
+    def stop(self) -> None:
+        """Stop the task handler operations"""
+        self._stopevent.set()
+
+
+class DownloadHandler:
+    """Handle batch-downloading of Youtube videos, using yt-dlp
+
+    Reworked to use multiple threads and dynamic stdout content.
+    """
+
+    ytdlp_options = {
         "format": "/".join((
-            "298+bestaudio",
-            "136+bestaudio",
-            "22",
             "bestvideo[height=720][fps=60]+bestaudio",
             "bestvideo[height=720][fps=30]+bestaudio",
             "bestvideo[height<=480]+bestaudio")),
         "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
     }
 
-    def __init__(
-            self,
-            video_ids,
-            slow_count: int = 30,
-            restart_count: int = 5):
-        self._count_restart = restart_count
-        self._count_slow = slow_count
-        self._store_video_data(video_ids)
+    def __init__(self, video_ids: list, max_threads: int = None):
+        self.lock = threading.Lock()
+        self.screen = Overwriteable()
+        self.message_queue = queue.Queue()
+        self.message_thread = DHMessageThread(
+            self.lock,
+            self.screen,
+            self.message_queue)
+        self.videos = store_video_data(video_ids)
+        self.max_threads = max_threads
 
-    # ---- Public methods
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
+
+        @param data Dict of data for the message handler
+        """
+        self.message_queue.put(data)
 
     def run(self) -> None:
-        """Public run handler
+        """Run the multipush handler operations
 
-        Initialises and starts the message handler.  Prepares yt_dlp.YoutubeDL
-        options and object.  Ends the message handler.
+        Starts the message handler.  Exits early if no branches are provided.
+        Fills task queue and prepares task threads.  Starts task threads and
+        marks all for stopping on an empty queue.  Joins the task queue to wait
+        until all tasks are complete.  Joins the task threads.  Stops the
+        instance message handlers.
         """
-        self._init_message_handler()
-        l = len(self._video_data)
-        s = '' if l == 1 else "s"
-        self._message(f"Received {l} video link{s}", "ok")
-        ytdlp_options = self._ytdlp_defaults.copy()
-        ytdlp_options.update({
-            "logger": CustomLogger(self),
-            "progress_hooks": [
-                self._progress_hook_downloading,
-                self._progress_hook_finished,
-            ],
-        })
-        self._message("Starting operations", "ok")
-        time_start = time.time()
-        with yt_dlp.YoutubeDL(ytdlp_options) as yt:
-            self._run(yt)
-        time_elapsed = time.time() - time_start
-        text = f"Download{s} complete in {time_elapsed:.1f}s"
-        if (l := len(self._failed)) > 0:
-            self._message(text, "warn")
-            s = '' if l == 1 else "s"
-            t = f"\n{' ' * 7}- ".join((
-                f"{l} download{s} failed:",
-                *self._failed))
-            self._message(t, "warn")
-        else:
-            self._message(text, "ok")
-        self._close_message_handler()
-
-    # ---- Private methods
-
-    def _check_percentage(
-            self,
-            numerator: int,
-            denominator: int,
-            dash: bool = False) -> None:
-        """Check percentage for the current download
-
-        @param numerator Numerator for the percentage calculation.
-        @param denominator Denominator for the percentage calculation.
-        @param dash Is this a DASH video calculation?
-        """
-        cv = self._current_video
-        try:
-            percentage = round((numerator / denominator) * 100)
-        except TypeError:
-            return
-        floor_20_pc = percentage - (percentage % 20)
-        if floor_20_pc >= (cv.progress + 20):
-            if dash:
-                (n, d) = (str(numerator), str(denominator))
-                f = "fragment {i} of {t}; ".format(i=n.rjust(len(d), " "), t=d)
-            else:
-                f = ''
-            text = "{p}: {s} download reached {v}% ({f}{t:.1f}s)".format(
-                p=cv.prefix,
-                s=cv.get_stage(),
-                v=str(floor_20_pc).rjust(3, " "),
-                f=f,
-                t=time.time() - cv.time_start)
-            self._message(text, "info")
-            cv.progress = floor_20_pc
-
-    def _check_speed(self, speed: float, dash: bool = False) -> None:
-        """Check speed of the current download
-
-        @param speed Speed of the download in bytes per second, from the
-        current info dict.
-        @param dash Is this a DASH video calculation?
-        """
-        try:
-            slow = (speed / (1024 * (512 if dash else 1024))) > 1
-        except TypeError:
-            return
-        update = 0
-        cv = self._current_video
-        if slow:
-            update = cv.count_slow + 1
-            if update > self._count_slow:
-                cv.count_slow = 0
-                if (cv.count_restart + 1) > self._count_restart:
-                    self._restart_limit_reached()
-                else:
-                    self._restart_slow()
-                raise DownloadTooSlow()
-        cv.count_slow = update
-
-    def _close_message_handler(self) -> None:
-        """End the instance MessageHandler"""
-        self._message_handler.end()
-
-    def _init_message_handler(self) -> None:
-        """Initialise and start the instance MessageHandler"""
-        self._message_handler = MessageHandler()
-        self._message_handler.start()
-
-    def _message(self, text: str, form: str) -> None:
-        """Print a message via the instance MessageHandler
-
-        @param text Message text.
-        @param form Message form.
-        """
-        self._message_handler.message(text=text, form=form)
-
-    def _progress_hook_downloading(self, data) -> None:
-        """Callback for the "downloading" stage
-
-        @param data Data provided by the yt_dlp.YoutubeDL object.
-        """
-        if not data.get("status") == "downloading":
-            return
-        if data.get("info_dict").get("fragments", None) is not None:
-            if not (cv := self._current_video)._dash_notified:
-                text = ''.join((
-                    f"{cv.prefix}: Video is DASH; minimum speed halved ",
-                    "and progress notifications modified"))
-                self._message(text, "warn")
-                cv._dash_notified = True
-            numerator = data.get("fragment_index")
-            denominator = data.get("fragment_count")
-            dash = True
-        else:
-            numerator = data.get("downloaded_bytes")
-            denominator = data.get("total_bytes")
-            dash = False
-        speed = data.get("speed")
-        self._check_percentage(numerator, denominator, dash)
-        self._check_speed(speed)
-
-    def _progress_hook_finished(self, data) -> None:
-        """Callback for the "finished" stage
-
-        @param data Data provided by the yt_dlp.YoutubeDL object.
-        """
-        if not data.get("status") == "finished":
-            return
-        cv = self._current_video
-        self._current_video.increment_stage()
-
-    def _restart_limit_reached(self) -> None:
-        """Notify of reaching the restart limit for the current video
-
-        Pop the current video to the failed videos list.
-        """
-        text = "{p}: Restart limit reached"
-        self._message(text.format(p=self._current_video.prefix), "warn")
-        self._failed.append(self._remaining.pop(0))
-
-    def _restart_slow(self) -> None:
-        """Notify of reaching the slow-speed limit for the current video"""
-        cv = self._current_video
-        cv.count_restart += 1
-        r = self._count_restart - cv.count_restart
-        text = "{p}: Reached slow speed limit, restarting (remaining: {r})"
-        self._message(text.format(p=cv.prefix, r=r), "warn")
-
-    def _run(self, yt) -> None:
-        """Private run function, to abstract control methods
-
-        @param yt yt_dlp.YoutubeDL object.
-        """
-        text = {
-            "already_downloaded": "{p}: Video already downloaded",
-            "end": "{p}: Video downloaded and merged in {t:.1f}s",
-            "start": "{p}: Starting download",
-        }
-        self._failed = []
-        self._remaining = list(self._video_data.keys())
-        while True:
-            try:
-                self._current_video = self._video_data.get(self._remaining[0])
-                cv = self._current_video
-                self._message(text.get("start").format(p=cv.prefix), "ok")
-                cv.time_start = time.time()
-                yt.download((cv.id,))
-                cv.time_end = time.time()
-                cv.time_elapsed = cv.time_end - cv.time_start
-                if cv.already_downloaded:
-                    self._message(
-                        text.get("already_downloaded").format(p=cv.prefix),
-                        "ok")
-                else:
-                    self._message(
-                        text.get("end").format(p=cv.prefix, t=cv.time_elapsed),
-                        "ok")
-                self._remaining.pop(0)
-            except DownloadTooSlow:
-                continue
-            if len(self._remaining) == 0:
-                break
-        pass  # TODO: Post-processing
-
-    def _store_video_data(self, video_ids) -> None:
-        """Store video data in the instance, given a set of video IDs
-
-        @param video_ids List or tuple of strings; IDs or links to the youtube
-        videos to attempt to download.
-        """
-        colour_index = 30
-        self._video_data = {}
-        for video_id in video_ids:
-            self._video_data.update({
-                video_id: Video(video_id, colour_index=colour_index),
+        self.message_thread.start()
+        l = len(self.videos)
+        if l == 0:
+            self.message({
+                "idx": 0,
+                "text": "\033[1;31m✘\033[m No video IDs provided",
             })
-            if colour_index >= 37:
-                colour_index = 30
-                continue
-            colour_index += 1
+            self.stop()
+            return
+
+        s = "" if l == 1 else "s"
+        self.message({
+            "idx": 0,
+            "text": f"\033[1;32m⁜\033[m Downloading {l} video{s}",
+        })
+
+        task_queue = queue.Queue()
+        for (idx, vid) in enumerate(self.videos):
+            vid.update({
+                "idx": idx + 1,  # Hardcoded offset
+                "ytdlp_options": self.ytdlp_options.copy(),
+            })
+            task_queue.put(vid)
+            self.message({
+                "idx": vid.get("idx"),
+                "text": vid.get("status").status,
+            })
+
+        workers = []
+        if self.max_threads is None:
+            n_workers = len(self.videos)
+        else:
+            n_workers = self.max_threads
+        for _ in range(0, n_workers):
+            workers.append(DHTaskThread(task_queue, self.message_queue))
+
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.stop()
+
+        task_queue.join()
+        for w in workers:
+            w.join()
+
+        self.stop()
+
+    def stop(self) -> None:
+        """Stop the instance message handlers"""
+        self.message_queue.join()
+        self.message_thread.stop()
+        self.message_thread.join()
 
 
-# Operations
+# Main function
+# -----------------------------------------------------------------------------
+
+
+def main():
+    """Example / Testing operations"""
+    dh = DownloadHandler(
+        ["BpgGXvw-ZLE", "1IDfoTxFNg0", "YikfKLxfRYI"],
+        max_threads=2)
+    dh.run()
+
+
+# Entrypoint
 # -----------------------------------------------------------------------------
 
 
 if __name__ == "__main__":
-    import sys
-    dh = DownloadHandler(sys.argv[1:])
-    dh.run()
+    main()
