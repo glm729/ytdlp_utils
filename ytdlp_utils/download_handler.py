@@ -449,7 +449,7 @@ class DownloadHandler:
         "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
     }
 
-    def __init__(self, video_ids: list, max_threads: int = None):
+    def __init__(self, video_ids: list = None, max_threads: int = None):
         self.lock = threading.Lock()
         self.screen = Overwriteable()
         self.message_queue = queue.Queue()
@@ -457,7 +457,10 @@ class DownloadHandler:
             self.lock,
             self.screen,
             self.message_queue)
-        self.videos = store_video_data(video_ids)
+        if video_ids is None:
+            self.videos = None
+        else:
+            self.store_video_data(video_ids)
         self.max_threads = max_threads
 
     def message(self, data: dict) -> None:
@@ -477,8 +480,7 @@ class DownloadHandler:
         instance message handlers.
         """
         self.message_thread.start()
-        l = len(self.videos)
-        if l == 0:
+        if self.videos is None or len(self.videos) == 0:
             self.message({
                 "idx": 0,
                 "text": "\033[1;31m✘\033[m No video IDs provided",
@@ -486,6 +488,7 @@ class DownloadHandler:
             self.stop()
             return
 
+        l = len(self.videos)
         s = "" if l == 1 else "s"
         self.message({
             "idx": 0,
@@ -528,6 +531,13 @@ class DownloadHandler:
         self.message_queue.join()
         self.message_thread.stop()
         self.message_thread.join()
+
+    def store_video_data(self, video_ids: list) -> None:
+        """Store video data in the instance
+
+        @param video_ids List or tuple of video ID data to store
+        """
+        self.videos = store_video_data(video_ids)
 
 
 # Main function
