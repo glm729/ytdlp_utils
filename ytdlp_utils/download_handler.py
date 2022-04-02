@@ -212,13 +212,14 @@ class Logger:
         }
 
     def _message(self, data: dict) -> None:
-        """
+        """Put a message on the instance message queue
+
+        @param data Dict of data for the message
         """
         self.message_queue.put(data)
 
     def _update(self) -> None:
-        """
-        """
+        """Send an update of the current status via the message queue"""
         self._message({
             "idx": self.task.get("idx"),
             "text": self.task.get("status").status,
@@ -226,6 +227,8 @@ class Logger:
 
     def debug(self, m: str) -> None:
         """Log debug messages
+
+        Changes text if already downloaded, merging, or changing stage.
 
         @param m Message text
         """
@@ -252,6 +255,7 @@ class Logger:
                 # If video, switch to audio
                 elif v.stage == 0:
                     v.set_stage(1)
+                # Update the status with the current download stage
                 self.task.get("status").update({
                     "body": "Downloading {s}".format(
                         s=v.get_stage_text(lower=True)),
@@ -285,6 +289,8 @@ class Logger:
 
     def warning(self, m: str) -> None:
         """Log warning messages
+
+        Skips the MKV merge message.
 
         @param m Message text
         """
@@ -368,6 +374,7 @@ class DHTaskThread(threading.Thread):
         @param task Dict of data for the current task
         """
         task.get("status").update({
+            "prefix": "\033[1;33m?\033[m",
             "body": "Starting",
         })
         self.message({
@@ -384,10 +391,20 @@ class DHTaskThread(threading.Thread):
             ],
         })
 
+        time_start = time.time()
+
         with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
             yt.download((task.get("video").id,))
 
-        task.get("status").update({ "body": "Done", })
+        time_end = time.time()
+
+        # TODO: If not already downloaded
+
+        task.get("status").update({
+            "prefix": "\033[1;32m✔\033[m",
+            "body": "\033[32mDownloaded and merged\033[m in {t}s".format(
+                t=round(time_end - time_start, 1)),
+        })
         self.message({
             "idx": task.get("idx"),
             "text": task.get("status").status,
@@ -455,13 +472,16 @@ class DownloadHandler:
         self.message_thread.start()
         l = len(self.videos)
         if l == 0:
-            self.message({ "idx": 0, "text": "No video IDs provided", })
+            self.message({
+                "idx": 0,
+                "text": "\033[1;31m✘\033[m No video IDs provided",
+            })
             self.stop()
             return
         s = "" if l == 1 else "s"
         self.message({
             "idx": 0,
-            "text": f"\033[1;32m✓\033[m Downloading {l} video{s}",
+            "text": f"\033[1;32m⁜\033[m Downloading {l} video{s}",
         })
         task_queue = queue.Queue()
         for (idx, vid) in enumerate(self.videos):
