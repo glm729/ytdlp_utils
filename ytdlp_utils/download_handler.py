@@ -149,6 +149,7 @@ class Video:
     }
 
     def __init__(self, video_id: str):
+        self.already_downloaded = False
         self.id = video_id
         self.progress = {
             0: 0.0,
@@ -157,7 +158,10 @@ class Video:
         self.stage = None
 
     def get_stage_text(self, lower: bool = False) -> str:
-        """
+        """Get the text representing the current stage
+
+        @param lower Should the text be returned as lowercase?
+        @return "Video" or "Audio", optionally lowercase
         """
         t = self._stage.get(self.stage)
         return t.lower() if lower else t
@@ -186,7 +190,7 @@ class Video:
 class Logger:
     """Custom logger definition for yt_dlp.YoutubeDL
 
-    Sinks most messages, and updates status of the instance video.
+    Skips most messages, and updates status of the instance video.
     """
 
     _skip_hints = (
@@ -235,14 +239,16 @@ class Logger:
         if any(map(lambda x: m.startswith(x), self._skip_hints)):
             return
         if m.endswith("has already been downloaded"):
+            self.task.get("video").already_downloaded = True
             self.task.get("status").update({
-                "body": "Video already downloaded",
+                "prefix": "\033[1;32m✔\033[m",
+                "body": "\033[32mAlready downloaded\033[m",
             })
             self._update()
             return
         if m.startswith("[Merger]"):
             self.task.get("status").update({
-                "body": "Merging data",
+                "body": "\033[36mMerging data\033[m",
             })
             self._update()
             return
@@ -398,7 +404,8 @@ class DHTaskThread(threading.Thread):
 
         time_end = time.time()
 
-        # TODO: If not already downloaded
+        if task.get("video").already_downloaded:
+            return
 
         task.get("status").update({
             "prefix": "\033[1;32m✔\033[m",
@@ -433,16 +440,20 @@ class DHTaskThread(threading.Thread):
 
 
 class DownloadHandler:
-    """
+    """Handle batch-downloading of Youtube videos, using yt-dlp
+
+    Reworked to use multiple threads and dynamic stdout content.
     """
 
-    # TODO
     ytdlp_options = {
-        "format": "bestvideo[height<=720][fps<=60]+bestaudio",
-        "outtmpl": "TESTING/%(uploader)s__%(title)s__%(id)s.%(ext)s",
+        "format": "/".join(
+            "bestvideo[height=720][fps=60]+bestaudio",
+            "bestvideo[height=720][fps=30]+bestaudio",
+            "bestvideo[height<=480]+bestaudio"),
+        "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
     }
 
-    def __init__(self, video_ids: list, threads: int = 1):
+    def __init__(self, video_ids: list, max_threads: int = None):
         self.lock = threading.Lock()
         self.screen = Overwriteable()
         self.message_queue = queue.Queue()
@@ -451,7 +462,7 @@ class DownloadHandler:
             self.screen,
             self.message_queue)
         self.videos = store_video_data(video_ids)
-        self.threads = threads
+        self.max_threads = max_threads
 
     def message(self, data: dict) -> None:
         """Put a message on the instance message queue
@@ -478,11 +489,13 @@ class DownloadHandler:
             })
             self.stop()
             return
+
         s = "" if l == 1 else "s"
         self.message({
             "idx": 0,
             "text": f"\033[1;32m⁜\033[m Downloading {l} video{s}",
         })
+
         task_queue = queue.Queue()
         for (idx, vid) in enumerate(self.videos):
             vid.update({
@@ -494,19 +507,24 @@ class DownloadHandler:
                 "idx": vid.get("idx"),
                 "text": vid.get("status").status,
             })
+
         workers = []
-        for _ in range(0, self.threads):
-            workers.append(
-                DHTaskThread(
-                    task_queue,
-                    self.message_queue))
+        if self.max_threads is None:
+            n_workers = len(self.videos)
+        else:
+            n_workers = self.max_threads
+        for _ in range(0, n_workers):
+            workers.append(DHTaskThread(task_queue, self.message_queue))
+
         for w in workers:
             w.start()
         for w in workers:
             w.stop()
+
         task_queue.join()
         for w in workers:
             w.join()
+
         self.stop()
 
     def stop(self) -> None:
@@ -521,13 +539,10 @@ class DownloadHandler:
 
 
 def main():
+    """Example / Testing operations"""
     dh = DownloadHandler(
-        [
-            "BpgGXvw-ZLE",
-            "1IDfoTxFNg0",
-            "YikfKLxfRYI",
-        ],
-        threads=2)
+        ["BpgGXvw-ZLE", "1IDfoTxFNg0", "YikfKLxfRYI"],
+        max_threads=2)
     dh.run()
 
 
