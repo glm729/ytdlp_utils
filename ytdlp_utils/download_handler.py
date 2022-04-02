@@ -199,7 +199,7 @@ class Logger:
         "[youtube]",
         "Deleting original file")
 
-    _warn_mkv = ''.join((
+    _warn_mkv = "".join((
         "Requested formats are incompatible for merge ",
         "and will be merged into mkv"))
 
@@ -446,10 +446,10 @@ class DownloadHandler:
     """
 
     ytdlp_options = {
-        "format": "/".join(
+        "format": "/".join((
             "bestvideo[height=720][fps=60]+bestaudio",
             "bestvideo[height=720][fps=30]+bestaudio",
-            "bestvideo[height<=480]+bestaudio"),
+            "bestvideo[height<=480]+bestaudio")),
         "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
     }
 
