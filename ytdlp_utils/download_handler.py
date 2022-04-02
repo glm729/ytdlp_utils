@@ -6,7 +6,6 @@
 
 
 import queue
-import random
 import threading
 import time
 import yt_dlp
@@ -61,7 +60,13 @@ class ProgressHook:
         self.message_queue.put(data)
 
     def check_percentage(self, num, den) -> None:
-        """
+        """Check the percentage of the current download
+
+        If more than ~1/3 of a second since last update, update the status and
+        screen contents.
+
+        @param num Numerator; current downloaded bytes
+        @param den Denominator; total downloadable bytes
         """
         pc = round((num / den) * 100, 1)
         self.task.get("video").set_progress(pc)
@@ -78,7 +83,9 @@ class ProgressHook:
         self._last_update = time.time()
 
     def downloading(self, data: dict) -> None:
-        """
+        """Progress hook callback for "downloading" stage
+
+        @param data Dict of data sent by yt_dlp.YoutubeDL
         """
         if not data.get("status") == "downloading":
             return
@@ -91,13 +98,6 @@ class ProgressHook:
             num = data.get("downloaded_bytes")
             den = data.get("total_bytes")
         self.check_percentage(num, den)
-
-    def finished(self, data: dict) -> None:
-        """
-        """
-        if not data.get("status") == "finished":
-            return
-        # TODO? ----
 
 
 class Status:
@@ -135,13 +135,7 @@ class Status:
 
 
 class Video:
-    """Class to collect and handle data for each video download
-
-    Needs to be able to store required info about the video itself, download
-    stage, download completion, and possibly additional info such as what index
-    it is at in the screen content to push an update, or some other unique
-    identifier such as that.
-    """
+    """Class to collect and handle data for each video download"""
 
     _stage = {
         0: "Video",
@@ -443,6 +437,8 @@ class DownloadHandler:
     """Handle batch-downloading of Youtube videos, using yt-dlp
 
     Reworked to use multiple threads and dynamic stdout content.
+
+    TODO: Exception handling, e.g. TimeoutError
     """
 
     ytdlp_options = {
@@ -453,7 +449,7 @@ class DownloadHandler:
         "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
     }
 
-    def __init__(self, video_ids: list, max_threads: int = None):
+    def __init__(self, video_ids: list = None, max_threads: int = None):
         self.lock = threading.Lock()
         self.screen = Overwriteable()
         self.message_queue = queue.Queue()
@@ -461,7 +457,10 @@ class DownloadHandler:
             self.lock,
             self.screen,
             self.message_queue)
-        self.videos = store_video_data(video_ids)
+        if video_ids is None:
+            self.videos = None
+        else:
+            self.store_video_data(video_ids)
         self.max_threads = max_threads
 
     def message(self, data: dict) -> None:
@@ -472,17 +471,16 @@ class DownloadHandler:
         self.message_queue.put(data)
 
     def run(self) -> None:
-        """Run the multipush handler operations
+        """Run the download handler operations
 
-        Starts the message handler.  Exits early if no branches are provided.
+        Starts the message handler.  Exits early if no video IDs are provided.
         Fills task queue and prepares task threads.  Starts task threads and
         marks all for stopping on an empty queue.  Joins the task queue to wait
         until all tasks are complete.  Joins the task threads.  Stops the
         instance message handlers.
         """
         self.message_thread.start()
-        l = len(self.videos)
-        if l == 0:
+        if self.videos is None or len(self.videos) == 0:
             self.message({
                 "idx": 0,
                 "text": "\033[1;31m✘\033[m No video IDs provided",
@@ -490,6 +488,7 @@ class DownloadHandler:
             self.stop()
             return
 
+        l = len(self.videos)
         s = "" if l == 1 else "s"
         self.message({
             "idx": 0,
@@ -532,6 +531,13 @@ class DownloadHandler:
         self.message_queue.join()
         self.message_thread.stop()
         self.message_thread.join()
+
+    def store_video_data(self, video_ids: list) -> None:
+        """Store video data in the instance
+
+        @param video_ids List or tuple of video ID data to store
+        """
+        self.videos = store_video_data(video_ids)
 
 
 # Main function
