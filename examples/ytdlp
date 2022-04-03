@@ -1,0 +1,57 @@
+#!/usr/bin/env python3.10
+
+
+# Module imports
+# -----------------------------------------------------------------------------
+
+
+import argparse
+import os
+import sys
+
+sys.path.append(os.path.expanduser("~/ytdlp_utils/ytdlp_utils/"))
+
+from download_handler import DownloadHandler
+from text_link_parser import TextLinkParser
+
+
+# Main function
+# -----------------------------------------------------------------------------
+
+
+def main() -> None:
+    """Download videos provided in a video links text file"""
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "file_path",
+        metavar="FILE_PATH",
+        type=str,
+        help="Path to the video links text file")
+
+    parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=None,
+        help="Number of threads to use for operations")
+
+    args = vars(parser.parse_args())
+
+    link_parser = TextLinkParser(args.get("file_path"))
+
+    if len(link_parser.video_ids) == 0:
+        return
+
+    dh = DownloadHandler(link_parser.video_ids, args.get("threads"))
+
+    dh.run()
+
+
+# Entrypoint
+# -----------------------------------------------------------------------------
+
+
+if __name__ == "__main__":
+    main()
