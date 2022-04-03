@@ -489,6 +489,8 @@ class DownloadHandler:
             self.stop()
             return
 
+        time_start = time.time()
+
         l = len(self.videos)
         s = "" if l == 1 else "s"
         self.message({
@@ -524,6 +526,16 @@ class DownloadHandler:
         task_queue.join()
         for w in workers:
             w.join()
+
+        time_end = time.time()
+
+        self.message({
+            "idx": 0,
+            "text": "\033[1;32m⁜\033[m Downloaded {l} video{s} in {t}s".format(
+                l=l,
+                s=s,
+                t=round(time_end - time_start, 1)),
+        })
 
         self.stop()
 
