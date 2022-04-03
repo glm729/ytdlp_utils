@@ -5,6 +5,7 @@
 # -----------------------------------------------------------------------------
 
 
+import argparse
 import queue
 import threading
 import time
@@ -509,7 +510,7 @@ class DownloadHandler:
 
         workers = []
         if self.max_threads is None:
-            n_workers = len(self.videos)
+            n_workers = 1
         else:
             n_workers = self.max_threads
         for _ in range(0, n_workers):
@@ -545,10 +546,30 @@ class DownloadHandler:
 
 
 def main():
-    """Example / Testing operations"""
+    """Basic command-line usage"""
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "video_ids",
+        metavar="ID",
+        type=str,
+        nargs="+",
+        help="Youtube video links or IDs to download")
+
+    parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=None,
+        help="Number of threads to use for operations")
+
+    args = vars(parser.parse_args())
+
     dh = DownloadHandler(
-        ["BpgGXvw-ZLE", "1IDfoTxFNg0", "YikfKLxfRYI"],
-        max_threads=2)
+        args.get("video_ids"),
+        max_threads=args.get("threads"))
+
     dh.run()
 
 
