@@ -7,6 +7,7 @@
 
 import queue
 import sys
+import time
 import yt_dlp
 
 from download_handler import Status
@@ -132,6 +133,8 @@ class PlaylistHandler(DownloadHandler):
         instance message handlers.
         """
         self.message_thread.start()
+        time_start = time.time()
+
         self.message({
             "idx": 0,
             "text": "\033[1;33m?\033[m Requesting playlist data",
@@ -176,6 +179,16 @@ class PlaylistHandler(DownloadHandler):
         task_queue.join()
         for w in workers:
             w.join()
+
+        time_end = time.time()
+
+        self.message({
+            "idx": 0,
+            "text": "\033[1;32m⁜\033[m Downloaded {l} video{s} in {t}s".format(
+                l=l,
+                s=s,
+                t=round(time_end - time_start, 1)),
+        })
 
         self.stop()
 
