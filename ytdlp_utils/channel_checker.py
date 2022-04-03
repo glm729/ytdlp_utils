@@ -218,7 +218,7 @@ class ChannelChecker:
     screen = Overwriteable()
     statuses = []
 
-    def __init__(self, data, n_videos: int = 6, n_threads: int = 1):
+    def __init__(self, data, n_videos: int = 6, n_threads: int = None):
         self.data = data
         self.n_videos = n_videos
         self.n_threads = n_threads
@@ -254,6 +254,7 @@ class ChannelChecker:
             self.replace_line(0, "\033[1;31m✘\033m  No channel data provided!")
             return
         self.replace_line(0, f"\033[1;32m⁜\033[m Checking {l} channel{s}")
+        time_start = time.time()
 
         # Set yt-dlp options dict
         ytdlp_options = {
@@ -270,7 +271,6 @@ class ChannelChecker:
         c0pw = max(map(lambda x: len(x.get("title")), self.data))
         pending_p = "\033[33m?\033[m"
         pending_t = "\033[30mPending\033[m"
-        l = len(self.screen.content)
 
         # Put tasks in the queue
         for (i, d) in enumerate(self.data):
@@ -285,6 +285,11 @@ class ChannelChecker:
             self.screen.add_line(status.text)
         self.screen.flush()
 
+        if self.n_threads is None:
+            n_threads = len(self.data)
+        else:
+            n_threads = self.n_threads
+
         # Generate task threads
         task_threads = list(map(
             lambda x: CCTaskThread(
@@ -292,7 +297,7 @@ class ChannelChecker:
                 qt,
                 qr,
                 ytdlp_options),
-            range(self.n_threads)))
+            range(0, n_threads)))
 
         # Generate results collector thread
         result_thread = CCResultThread(qr)
@@ -318,6 +323,15 @@ class ChannelChecker:
         result = list(sorted(
             result_thread.result,
             key=lambda x: x.get("title").lower()))
+
+        time_end = time.time()
+
+        self.replace_line(
+            0,
+            "\033[1;32m⁜\033[m {l} channel{s} checked in {t}s".format(
+                l=l,
+                s=s,
+                t=round(time_end - time_start, 1)))
 
         # Return the output data
         return result
@@ -349,7 +363,7 @@ def main():
         "--threads",
         help="Number of threads to use for requesting channel data",
         type=int,
-        default=1)
+        default=None)
 
     args = parser.parse_args()
 

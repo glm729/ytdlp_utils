@@ -5,6 +5,7 @@
 # -----------------------------------------------------------------------------
 
 
+import argparse
 import queue
 import threading
 import time
@@ -488,6 +489,8 @@ class DownloadHandler:
             self.stop()
             return
 
+        time_start = time.time()
+
         l = len(self.videos)
         s = "" if l == 1 else "s"
         self.message({
@@ -509,7 +512,7 @@ class DownloadHandler:
 
         workers = []
         if self.max_threads is None:
-            n_workers = len(self.videos)
+            n_workers = 1
         else:
             n_workers = self.max_threads
         for _ in range(0, n_workers):
@@ -523,6 +526,16 @@ class DownloadHandler:
         task_queue.join()
         for w in workers:
             w.join()
+
+        time_end = time.time()
+
+        self.message({
+            "idx": 0,
+            "text": "\033[1;32m⁜\033[m Downloaded {l} video{s} in {t}s".format(
+                l=l,
+                s=s,
+                t=round(time_end - time_start, 1)),
+        })
 
         self.stop()
 
@@ -545,10 +558,30 @@ class DownloadHandler:
 
 
 def main():
-    """Example / Testing operations"""
+    """Basic command-line usage"""
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "video_ids",
+        metavar="ID",
+        type=str,
+        nargs="+",
+        help="Youtube video links or IDs to download")
+
+    parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=None,
+        help="Number of threads to use for operations")
+
+    args = vars(parser.parse_args())
+
     dh = DownloadHandler(
-        ["BpgGXvw-ZLE", "1IDfoTxFNg0", "YikfKLxfRYI"],
-        max_threads=2)
+        args.get("video_ids"),
+        max_threads=args.get("threads"))
+
     dh.run()
 
 
