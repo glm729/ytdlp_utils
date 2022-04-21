@@ -140,6 +140,7 @@ class CustomLogger:
 
 
 class CCMessageThread(DHMessageThread):
+    """Subclassing to keep the `CC` naming convention"""
     pass
 
 
@@ -253,8 +254,111 @@ class CCResultThread(threading.Thread):
 
 class ChannelChecker:
 
-    def __init__(self):
-        pass
+    def __init__(self, data, n_videos: int = 6, n_threads: int = None):
+        self.lock = threading.Lock()
+        self.message_queue = queue.Queue()
+        self.screen = Overwriteable()
+        self.message_thread = CCMessageThread(
+            self.lock,
+            self.screen,
+            self.message_queue)
+        self.data = data
+        self.n_videos = n_videos
+        self.n_threads = n_threads
+
+    def run(self):
+        """Run the ChannelChecker
+
+        TODO: More doc
+        """
+        self.message_thread.start()
+        l = len(self.data)
+        if l == 0:
+            self.message({
+                "idx": 0,
+                "text": "\033[1;31m✘\033[m No channel data provided",
+            })
+            self.stop()
+            return
+        s = "" if l == 1 else "s"
+        self.message({
+            "idx": 0,
+            "text": f"\033[1;32m⁜\033[m Checking {l} channel{s}",
+        })
+
+        time_start = time.time()
+
+        ytdlp_options = {
+            "extract_flat": True,
+            "logger": CustomLogger(),
+            "playlistend": self.n_videos,
+        }
+
+        status_header_pw = max(map(lambda x: len(x.get("title")), self.data))
+
+        task_queue = queue.Queue()
+        result_queue = queue.Queue()
+        result_thread = CCResultThread(result_queue)
+
+        for (idx, dat) in enumerate(self.data):
+            status = Status(
+                prefix="\033[33m?\033[m",
+                header=dat.get("title").ljust(status_header_pw),
+                body="\033[30mPending\033[m")
+            dat.update({ "status": status, })
+            self.message({
+                "idx": idx + 1,  # Hardcoded offset
+                "text": dat.get("status").status,
+            })
+            task_queue.put(dat)
+
+        if self.n_threads is None:
+            n_threads = len(self.data)
+        else:
+            n_threads = self.n_threads
+
+        worker_threads = []
+        for _ in range(0, n_threads):
+            worker_threads.append(
+                CCTaskThread(
+                    task_queue,
+                    result_queue,
+                    self.message_queue,
+                    ytdlp_options))
+
+        for worker in worker_threads:
+            worker.start()
+        for worker in worker_threads:
+            worker.stop()
+
+        task_queue.join()
+        for worker in workers:
+            worker.join()
+
+        result_thread.stop()
+        result_thread.join()
+
+        result = list(sorted(
+            result_thread.result,
+            key=lambda x: x.get("title").lower()))
+
+        time_end = time.time()
+
+        self.message({
+            "idx": 0,
+            "text": "\033[1;32m⁜\033[m {l} channel{s} checked in {t}s".format(
+                l=l,
+                s=s,
+                t=str(round(time_end - time_start, 1))),
+        })
+
+        return result
+
+    def stop(self) -> None:
+        """Stop the instance message handlers"""
+        self.message_queue.join()
+        self.message_thread.stop()
+        self.message_thread.join()
 
 
 # Main function
@@ -262,7 +366,41 @@ class ChannelChecker:
 
 
 def main():
-    pass
+    """
+    """
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "file_path",
+        help="File path for the channel data JSON",
+        type=str)
+    parser.add_argument(
+        "-n",
+        "--number",
+        help="Number of videos for which to check",
+        type=int,
+        default=6)
+    parser.add_argument(
+        "-t",
+        "--threads",
+        help="Number of threads to use for requesting channel data",
+        type=int,
+        default=None)
+
+    args = parser.parse_args()
+
+    with open(args.file_path, "r") as fh:
+        data = json.loads(fh.read())
+
+    cc = ChannelChecker(
+        data=data,
+        n_videos=args.number,
+        n_threads=args.threads)
+
+    result = cc.run()
+
+    # with open(args.file_path, "w") as fh:
+    #     fh.write(json.dumps(result, indent=4) + "\n")
 
 
 # Entrypoint
