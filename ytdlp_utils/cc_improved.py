@@ -5,6 +5,8 @@
 # -----------------------------------------------------------------------------
 
 
+import argparse
+import json
 import queue
 import sys
 import threading
@@ -105,7 +107,7 @@ def status_new_data_body(new_title: list, new_video: list) -> str:
         s_v = "" if l_v == 1 else "s"
         t_data_new_video = [
             f"↳ \033[32mNew video{s_v}\033[m:",
-            *map(lambda x: f"  - {x}", new_videos),
+            *map(lambda x: f"  - {x}", new_video),
         ]
         t_data_header.append(f"\033[32m{l_v} new video{s_v}\033[m")
         t_data_body.extend(t_data_new_video)
@@ -174,7 +176,7 @@ class CCTaskThread(threading.Thread):
         """
         task.get("status").update({
             "prefix": "\033[1;33m?\033[m",
-            "body": "Requesting channel data",
+            "body": "\033[36mRequesting channel data\033[m",
         })
         self.update_status(task)
 
@@ -266,6 +268,13 @@ class ChannelChecker:
         self.n_videos = n_videos
         self.n_threads = n_threads
 
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
+
+        @param data Dict of message data
+        """
+        self.message_queue.put(data)
+
     def run(self):
         """Run the ChannelChecker
 
@@ -303,9 +312,13 @@ class ChannelChecker:
         for (idx, dat) in enumerate(self.data):
             status = Status(
                 prefix="\033[33m?\033[m",
-                header=dat.get("title").ljust(status_header_pw),
+                header="\033[35m{t}\033[m".format(
+                    t=dat.get("title").ljust(status_header_pw)),
                 body="\033[30mPending\033[m")
-            dat.update({ "status": status, })
+            dat.update({
+                "idx": idx + 1,
+                "status": status,
+            })
             self.message({
                 "idx": idx + 1,  # Hardcoded offset
                 "text": dat.get("status").status,
@@ -326,13 +339,15 @@ class ChannelChecker:
                     self.message_queue,
                     ytdlp_options))
 
+        result_thread.start()
+
         for worker in worker_threads:
             worker.start()
         for worker in worker_threads:
             worker.stop()
 
         task_queue.join()
-        for worker in workers:
+        for worker in worker_threads:
             worker.join()
 
         result_thread.stop()
@@ -351,6 +366,8 @@ class ChannelChecker:
                 s=s,
                 t=str(round(time_end - time_start, 1))),
         })
+
+        self.stop()
 
         return result
 
