@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.10
 
 
 # Module imports
@@ -13,14 +13,113 @@ import threading
 import time
 import yt_dlp
 
+from download_handler import DHMessageThread
+from download_handler import Status
 from overwriteable import Overwriteable
-from status_line import ChannelStatus
+
+
+# Function definitions
+# -----------------------------------------------------------------------------
+
+
+def check_data(task, data) -> tuple:
+    """Check incoming data against existing task data
+
+    @param task Current channel data
+    @param data Incoming recent uploads data
+    @return 3-tuple; channel data object, list of new (i.e. changed) titles,
+    and list of new videos
+    """
+    # Initialise stores for title changes and new videos
+    new_title = []
+    new_video = []
+    # Loop over the incoming data
+    for n_entry in data:
+        # Assume it's a new video
+        is_new = True
+        for o_entry in task.get("recent_uploads"):
+            # If same URI, mark as not new and check for title change
+            if n_entry.get("uri") == o_entry.get("uri"):
+                is_new = False
+                n_title = n_entry.get("title")
+                o_title = o_entry.get("title")
+                # If the title differs, push to the changed title list
+                if n_title != o_title:
+                    new_title.append((o_title, n_title))
+        # If still new after looping all data, push to the new video list
+        if is_new:
+            new_video.append(n_entry.get("title"))
+    # Build an output dict in the common channel data format
+    output = {
+        "recent_uploads": data,
+        "title": task.get("title"),
+        "uri": task.get("uri"),
+    }
+    # Return the 3-tuple of output data, changed titles, and new videos
+    return (output, new_title, new_video)
+
+
+def status_new_data(status, new_title: list, new_video: list):
+    """Update a status line with new data
+
+    If there are any new data, update the given status line with some fancy
+    output.  If there are no new data, mention that too.
+
+    @param new_title List of changed titles
+    @param new_video List of new videos
+    @return Mutated status object; updated prefix and body
+    """
+    prefix = "\033[1;32m✔\033[m"
+    body = status_new_data_body(new_title, new_video)
+    status.update({ "prefix": prefix, "body": body, })
+    return status
+
+
+def status_new_data_body(new_title: list, new_video: list) -> str:
+    """Get the text body for updating status line data
+
+    Wrapped for short-circuit if no new data, and due to the complexity of
+    latter operations (a bit of a jumble).
+
+    @param new_title List of new (changed) video titles
+    @param new_video List of new videos
+    @return Body text (string)
+    """
+    # Store the lengths, and check if there's nothing to do
+    l_t = len(new_title)
+    l_v = len(new_video)
+    if l_t == 0 and l_v == 0:
+        return "\033[34mNo new data\033[m"
+    # Initialise stores for text data
+    t_data_header = []
+    t_data_body = []
+    # If at least one changed title, add data
+    if l_t > 0:
+        s_t = "" if l_t == 1 else "s"
+        t_data_new_title = [
+            f"↳ \033[33mChanged title{s_t}\033[m:",
+            *map(lambda x: f"  - {x[0]} => {x[1]}", new_title),
+        ]
+        t_data_header.append(f"\033[33m{l_t} title{s_t} changed")
+        t_data_body.extend(t_data_new_title)
+    # If at least one new video, add data
+    if l_v > 0:
+        s_v = "" if l_v == 1 else "s"
+        t_data_new_video = [
+            f"↳ \033[32mNew video{s_v}\033[m:",
+            *map(lambda x: f"  - {x}", new_video),
+        ]
+        t_data_header.append(f"\033[32m{l_v} new video{s_v}\033[m")
+        t_data_body.extend(t_data_new_video)
+    # Join the body header text and body additional text
+    t_header = "; ".join(t_data_header)
+    t_body = "\n".join(t_data_body)
+    # Return the combined text for the body
+    return f"{t_header}\n{t_body}"
 
 
 # Class definitions
 # -----------------------------------------------------------------------------
-
-
 
 
 class CustomLogger:
@@ -42,301 +141,241 @@ class CustomLogger:
         pass
 
 
+class CCMessageThread(DHMessageThread):
+    """Subclassing to keep the `CC` naming convention"""
+    pass
 
 
 class CCTaskThread(threading.Thread):
 
-    _stopevent = threading.Event()
+    def __init__(self, task_queue, result_queue, message_queue, ytdlp_options):
+        super().__init__(daemon=True)
+        self._stopevent = threading.Event()
+        self.task_queue = task_queue
+        self.result_queue = result_queue
+        self.message_queue = message_queue
+        self.ytdlp_options = ytdlp_options
 
-    def __init__(self, parent, task_queue, result_queue, ytdlp_options):
-        super().__init__()
-        self.daemon = True
-        self.p = parent
-        self.qt = task_queue
-        self.qr = result_queue
-        self.opt = ytdlp_options
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
 
-
-    def check_data(self, task, data):
-        """Check the incoming data against the existing data
-
-        @param task Current channel data
-        @param data Incoming recent uploads data
+        @param data Dict of message data
         """
-        new_title = []
-        new_video = []
-        for new in data:
-            is_new = True
-            for old in task.get("recent_uploads"):
-                if new.get("uri") == old.get("uri"):
-                    is_new = False
-                    if (nt := new.get("title")) != (ot := old.get("title")):
-                        new_title.append((ot, nt))
-            if is_new:
-                new_video.append(new.get("title"))
-        output = {
-            "recent_uploads": data,
-            "title": task.get("title"),
-            "uri": task.get("uri"),
-        }
-        return (output, new_title, new_video)
+        self.message_queue.put(data)
 
+    def process(self, task: dict) -> None:
+        """Process a given task; request channel data and check
 
-    def request_data(self, task):
-        """Request recent videos data for a given channel
+        Marks the status as requesting.  Requests the channel data using the
+        instance yt_dlp options.  Reduces data and checks for changed titles
+        and new videos.  Updates task status with respect to new data, if any.
+        Returns results object, i.e. channel data returned by yt_dlp ops.
 
-        @param task Dict of channel data
-        @return List of dicts; list of top n_videos recent video uploads, with
-        only the title and URI
+        @param task Task data to process
+        @return New channel data from yt_dlp.YoutubeDL
         """
-        with yt_dlp.YoutubeDL(self.opt) as yt:
+        task.get("status").update({
+            "prefix": "\033[1;33m?\033[m",
+            "body": "\033[36mRequesting channel data\033[m",
+        })
+        self.update_status(task)
+
+        with yt_dlp.YoutubeDL(self.ytdlp_options) as yt:
             data = yt.extract_info(task.get("uri"), download=False)
-        return list(map(
+
+        data_reduced = list(map(
             lambda x: { "title": x.get("title"), "uri": x.get("url"), },
             data.get("entries")))
 
+        (result, new_title, new_video) = check_data(task, data_reduced)
 
-    def run(self) -> None:
-        """Run thread operations
+        task.update({
+            "status": status_new_data(
+                task.get("status"),
+                new_title,
+                new_video),
+        })
+        self.update_status(task)
 
-        Get tasks from a task queue, and process the data.  Stop when no more
-        tasks are available from the queue and the stop marker is set.
-        """
-        # Clear the stop event if already set
+        return result
+
+    def run(self):
+        """Run the ChannelChecker task handler"""
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
             try:
-                (status, task) = self.qt.get(timeout=0.2)
-                self.mark_requesting(status)
-                data = self.request_data(task)
-                (result, new_title, new_video) = self.check_data(task, data)
-                self.qr.put(result)
-                self.qt.task_done()
-                self.mark_complete(status, result, new_title, new_video)
+                task = self.task_queue.get(timeout=0.2)
+                result = self.process(task)
+                self.result_queue.put(result)
+                self.task_queue.task_done()
             except queue.Empty:
                 if self._stopevent.is_set():
                     break
 
-
-    def mark_complete(self, status, result, new_title, new_video) -> None:
-        """Mark the current status line as complete
-
-        Provide info on changed and new titles, if any.
-
-        @param status
-        @param result
-        @param new_title
-        @param new_video
-        """
-        prefix = "\033[1;32m✔\033[m"
-        suffix_data = []
-        nt = False
-        nv = False
-        if (l := len(new_title)) > 0:
-            s = '' if l == 1 else "s"
-            suffix_data.append(f"\033[33m{l} title{s} changed\033[m")
-            nt = [
-                f"↳ \033[33mChanged title{s}\033[m:",
-                *map(lambda x: f"  - {x[0]} => {x[1]}", new_title),
-            ]
-        if (l := len(new_video)) > 0:
-            s = '' if l == 1 else "s"
-            suffix_data.append(f"\033[32m{l} new video{s}\033[m")
-            nv = [
-                f"↳ \033[32mNew video{s}\033[m:",
-                *map(lambda x: f"  - {x}", new_video),
-            ]
-        if len(suffix_data) == 0:
-            suffix = "\033[34mNo new videos\033[m"
-        else:
-            suffix = "; ".join(suffix_data)
-        if isinstance(nt, list):
-            status.additional.extend(nt)
-        if isinstance(nv, list):
-            status.additional.extend(nv)
-        status.set_prefix(prefix)
-        status.set_suffix(suffix)
-        with self.p.lock:
-            self.p.screen.replace_line(status.idx, status.text)
-            self.p.screen.flush()
-
-
-    def mark_requesting(self, status) -> None:
-        """Mark the current status line as being requested"""
-        prefix = "\033[1;33m?\033[m"
-        suffix = "\033[36mRequesting data\033[m"
-        status.set_prefix(prefix)
-        status.set_suffix(suffix)
-        with self.p.lock:
-            self.p.screen.replace_line(status.idx, status.text)
-            self.p.screen.flush()
-
-
-    def stop(self) -> None:
-        """Stop the thread operations"""
+    def stop(self):
+        """Stop the task thread operations"""
         self._stopevent.set()
 
+    def update_status(self, task: dict) -> None:
+        """Update a task status message in the instance Overwritable
 
+        @param task Task data dict
+        """
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
 
 
 class CCResultThread(threading.Thread):
 
-    _stopevent = threading.Event()
-
-    result = []
-
     def __init__(self, result_queue):
-        super().__init__()
-        self.daemon = True
-        self.qr = result_queue
+        super().__init__(daemon=True)
+        self._stopevent = threading.Event()
+        self.result = []
+        self.result_queue = result_queue
 
-
-    def run(self) -> None:
+    def run(self):
         """Run operations for collecting results queue data"""
         if self._stopevent.is_set():
             self._stopevent.clear()
         while True:
             try:
-                task = self.qr.get(timeout=0.2)
+                task = self.result_queue.get(timeout=0.2)
                 self.result.append(task)
-                self.qr.task_done()
+                self.result_queue.task_done()
             except queue.Empty:
                 if self._stopevent.is_set():
                     break
 
-    def stop(self) -> None:
-        """Stop thread operations"""
+    def stop(self):
+        """Stop the result thread operations"""
         self._stopevent.set()
-
-
 
 
 class ChannelChecker:
 
-    lock = threading.RLock()
-    screen = Overwriteable()
-    statuses = []
-
     def __init__(self, data, n_videos: int = 6, n_threads: int = None):
+        self.lock = threading.Lock()
+        self.message_queue = queue.Queue()
+        self.screen = Overwriteable()
+        self.message_thread = CCMessageThread(
+            self.lock,
+            self.screen,
+            self.message_queue)
         self.data = data
         self.n_videos = n_videos
         self.n_threads = n_threads
 
+    def message(self, data: dict) -> None:
+        """Put a message on the instance message queue
 
-    def add_line(self, text: str, idx: int = None) -> None:
-        """Add a line to the instance overwriteable stream
-
-        @param text Text to add to the content
-        @param idx Optional index at which to add the line; defaults to
-        appending the line
+        @param data Dict of message data
         """
-        self.screen.add_line(text, idx)
-        self.screen.flush()
+        self.message_queue.put(data)
 
+    def run(self):
+        """Run the ChannelChecker
 
-    def replace_line(self, idx: int, text: str) -> None:
-        """Replace a line in the overwriteable stream
-
-        @param idx Index at which to replace the line
-        @param text Text with which to replace the line
+        TODO: More doc
         """
-        self.screen.replace_line(idx, text)
-        self.screen.flush()
-
-
-    def run(self) -> None:
-        """Check all channels provided in the input data"""
-        self.add_line("Starting operations...")
+        self.message_thread.start()
         l = len(self.data)
-        s = '' if l == 1 else "s"
         if l == 0:
-            self.replace_line(0, "\033[1;31m✘\033m  No channel data provided!")
+            self.message({
+                "idx": 0,
+                "text": "\033[1;31m✘\033[m No channel data provided",
+            })
+            self.stop()
             return
-        self.replace_line(0, f"\033[1;32m⁜\033[m Checking {l} channel{s}")
+        s = "" if l == 1 else "s"
+        self.message({
+            "idx": 0,
+            "text": f"\033[1;32m⁜\033[m Checking {l} channel{s}",
+        })
+
         time_start = time.time()
 
-        # Set yt-dlp options dict
         ytdlp_options = {
             "extract_flat": True,
             "logger": CustomLogger(),
             "playlistend": self.n_videos,
         }
 
-        # Initialise task and result queues
-        qt = queue.Queue()
-        qr = queue.Queue()
+        status_header_pw = max(map(lambda x: len(x.get("title")), self.data))
 
-        # Prepare data for visuals
-        c0pw = max(map(lambda x: len(x.get("title")), self.data))
-        pending_p = "\033[33m?\033[m"
-        pending_t = "\033[30mPending\033[m"
+        task_queue = queue.Queue()
+        result_queue = queue.Queue()
+        result_thread = CCResultThread(result_queue)
 
-        # Put tasks in the queue
-        for (i, d) in enumerate(self.data):
-            status = ChannelStatus(
-                    i + 1,
-                    d.get("title"),
-                    pending_p,
-                    pending_t,
-                    c0pw)
-            self.statuses.append(status)
-            qt.put((status, d))
-            self.screen.add_line(status.text)
-        self.screen.flush()
+        for (idx, dat) in enumerate(self.data):
+            status = Status(
+                prefix="\033[33m?\033[m",
+                header="\033[35m{t}\033[m".format(
+                    t=dat.get("title").ljust(status_header_pw)),
+                body="\033[30mPending\033[m")
+            dat.update({
+                "idx": idx + 1,
+                "status": status,
+            })
+            self.message({
+                "idx": idx + 1,  # Hardcoded offset
+                "text": dat.get("status").status,
+            })
+            task_queue.put(dat)
 
         if self.n_threads is None:
             n_threads = len(self.data)
         else:
             n_threads = self.n_threads
 
-        # Generate task threads
-        task_threads = list(map(
-            lambda x: CCTaskThread(
-                self,
-                qt,
-                qr,
-                ytdlp_options),
-            range(0, n_threads)))
+        worker_threads = []
+        for _ in range(0, n_threads):
+            worker_threads.append(
+                CCTaskThread(
+                    task_queue,
+                    result_queue,
+                    self.message_queue,
+                    ytdlp_options))
 
-        # Generate results collector thread
-        result_thread = CCResultThread(qr)
-
-        # Start the task threads
-        for t in task_threads:
-            t.start()
-
-        # Start the result thread
         result_thread.start()
 
-        # Mark the task threads to stop, and wait for them to join
-        for t in task_threads:
-            t.stop()
-        for t in task_threads:
-            t.join()
+        for worker in worker_threads:
+            worker.start()
+        for worker in worker_threads:
+            worker.stop()
 
-        # Mark the result thread to stop, and wait for it to join
+        task_queue.join()
+        for worker in worker_threads:
+            worker.join()
+
         result_thread.stop()
         result_thread.join()
 
-        # Retrieve the results and sort the dict
         result = list(sorted(
             result_thread.result,
             key=lambda x: x.get("title").lower()))
 
         time_end = time.time()
 
-        self.replace_line(
-            0,
-            "\033[1;32m⁜\033[m {l} channel{s} checked in {t}s".format(
+        self.message({
+            "idx": 0,
+            "text": "\033[1;32m⁜\033[m {l} channel{s} checked in {t}s".format(
                 l=l,
                 s=s,
-                t=round(time_end - time_start, 1)))
+                t=str(round(time_end - time_start, 1))),
+        })
 
-        # Return the output data
+        self.stop()
+
         return result
 
-
+    def stop(self) -> None:
+        """Stop the instance message handlers"""
+        self.message_queue.join()
+        self.message_thread.stop()
+        self.message_thread.join()
 
 
 # Main function

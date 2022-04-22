@@ -447,6 +447,7 @@ class DownloadHandler:
             "bestvideo[height=720][fps=60]+bestaudio",
             "bestvideo[height=720][fps=30]+bestaudio",
             "bestvideo[height<=480]+bestaudio")),
+        "merge_output_format": "mkv",
         "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
     }
 
