@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.8
+#!/usr/bin/env python3.10
 
 
 # Module imports
@@ -6,7 +6,27 @@
 
 
 import io
+import os
 import sys
+
+
+# Function definitions
+# -----------------------------------------------------------------------------
+
+
+def truncate_line(line, max_len):
+    """Truncate a string to a given length
+
+    @param line String to truncate
+    @param max_len Length to which to truncate the line
+    """
+    if line.count("\n") > 0:
+        return "\n".join(map(
+            lambda x: truncate_line(x, max_len),
+            line.split("\n")))
+    if len(line) <= max_len:
+        return line
+    return f"{line[0:(max_len - 3)]}..."
 
 
 # Class definitions
@@ -35,7 +55,10 @@ class Overwriteable:
         """
         self.buffer.seek(0, 0)
         self.buffer.truncate(0)
-        output = "\n".join(self.content)
+        max_len = os.get_terminal_size().columns
+        output = "\n".join(map(
+            lambda x: truncate_line(x, max_len),
+            self.content))
         print(output, end="\n", file=self.buffer)
 
     def add_line(self, text: str, idx: int = None) -> None:
