@@ -310,11 +310,12 @@ class ChannelChecker:
         result_thread = CCResultThread(result_queue)
 
         for (idx, dat) in enumerate(self.data):
-            status = Status(
-                prefix="\033[33m?\033[m",
-                header="\033[35m{t}\033[m".format(
+            status = Status({
+                "prefix": "\033[33m?\033[m",
+                "header": "\033[35m{t}\033[m".format(
                     t=dat.get("title").ljust(status_header_pw)),
-                body="\033[30mPending\033[m")
+                "body": "\033[30mPending\033[m",
+            })
             dat.update({
                 "idx": idx + 1,
                 "status": status,
