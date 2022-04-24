@@ -38,7 +38,11 @@ def store_video_data(video_ids) -> list:
     for vid in video_ids:
         header = "\033[35m{t}\033[m".format(t=vid.ljust(pw, " "))
         output.append({
-            "status": Status(prefix, header, body),
+            "status": Status({
+                "prefix": prefix,
+                "header": header,
+                "body": body,
+            }),
             "video": Video(vid),
         })
     return output
