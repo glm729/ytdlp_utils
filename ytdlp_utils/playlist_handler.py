@@ -76,7 +76,11 @@ def store_video_data(video_ids) -> list:
             c=str(idx + 1).rjust(pw, " "),
             t=l)
         output.append({
-            "status": Status(prefix, header, body),
+            "status": Status({
+                "prefix": prefix,
+                "header": header,
+                "body": body,
+            }),
             "video": Video(vid),
         })
     return output
