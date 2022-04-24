@@ -73,7 +73,7 @@ class ProgressHook:
         self.task.get("video").set_progress(pc)
         if time.time() > (self._last_update + 0.333):
             self.task.get("status").update({
-                "body": "Downloading {s}  {p}%".format(
+                "body": "Downloading {s} ({p}%)".format(
                     s=self.task.get("video").get_stage_text(lower=True),
                     p=str(pc).rjust(5, " ")),
             })
@@ -449,6 +449,7 @@ class DownloadHandler:
             "bestvideo[height<=480]+bestaudio")),
         "merge_output_format": "mkv",
         "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
+        "retries": 99,
     }
 
     def __init__(self, video_ids: list = None, max_threads: int = None):
