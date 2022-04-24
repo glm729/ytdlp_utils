@@ -8,7 +8,12 @@
 class Status:
     """Collect data relating to the status of an item"""
 
-    _accept_keys = ["prefix", "header", "body"]
+    _accept_keys = [
+        "prefix",
+        "header",
+        "body",
+        "suffix",
+    ]
 
     def __init__(self, data):
         self.update(data)
