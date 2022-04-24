@@ -12,6 +12,8 @@ import time
 import yt_dlp
 
 from overwriteable import Overwriteable
+from status import Status
+from video import Video
 
 
 # Function definitions
@@ -99,87 +101,6 @@ class ProgressHook:
             num = data.get("downloaded_bytes")
             den = data.get("total_bytes")
         self.check_percentage(num, den)
-
-
-class Status:
-    """Collect data relating to the status of an item"""
-
-    def __init__(self, prefix: str, header: str, body: str):
-        self.update({
-            "prefix": prefix,
-            "header": header,
-            "body": body,
-        })
-
-    def _build(self) -> None:
-        """Build the status text
-
-        Currently does not handle missing attributes.
-        """
-        self.status = "{p} {h} {b}".format(
-            p=self.prefix,
-            h=self.header,
-            b=self.body)
-
-    def update(self, data: dict) -> None:
-        """Update the status data
-
-        Builds the text after assignments.
-
-        @param data Dict of data to use for updating status
-        """
-        for (k, v) in data.items():
-            if not k in ["prefix", "header", "body"]:
-                continue
-            setattr(self, k, v)
-        self._build()
-
-
-class Video:
-    """Class to collect and handle data for each video download"""
-
-    _stage = {
-        0: "Video",
-        1: "Audio",
-    }
-
-    def __init__(self, video_id: str):
-        self.already_downloaded = False
-        self.id = video_id
-        self.progress = {
-            0: 0.0,
-            1: 0.0,
-        }
-        self.stage = None
-
-    def get_stage_text(self, lower: bool = False) -> str:
-        """Get the text representing the current stage
-
-        @param lower Should the text be returned as lowercase?
-        @return "Video" or "Audio", optionally lowercase
-        """
-        t = self._stage.get(self.stage)
-        return t.lower() if lower else t
-
-    def set_progress(self, percentage: float) -> None:
-        """Set the progress for the current download stage
-
-        Updates the progress according to the current download stage.
-
-        @param percentage Percentage completion of the current download
-        """
-        self.progress.update({ self.stage: percentage, })
-
-    def set_stage(self, stage: int) -> None:
-        """Set the video download stage
-
-        Stage must only be 0 or 1 -- video or audio.
-
-        @param stage Download stage: 0 == video, 1 == audio
-        """
-        if not stage in [0, 1]:
-            raise RuntimeError("Stage must only be 0 or 1")
-        self.stage = stage
 
 
 class Logger:
@@ -463,7 +384,7 @@ class DownloadHandler:
         if video_ids is None:
             self.videos = None
         else:
-            self.store_video_data(video_ids)
+            self.videos = store_video_data(video_ids)
         self.max_threads = max_threads
 
     def message(self, data: dict) -> None:
@@ -546,13 +467,6 @@ class DownloadHandler:
         self.message_queue.join()
         self.message_thread.stop()
         self.message_thread.join()
-
-    def store_video_data(self, video_ids: list) -> None:
-        """Store video data in the instance
-
-        @param video_ids List or tuple of video ID data to store
-        """
-        self.videos = store_video_data(video_ids)
 
 
 # Main function
