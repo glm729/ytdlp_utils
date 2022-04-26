@@ -8,6 +8,7 @@
 import argparse
 import queue
 import re
+import sys
 import threading
 import time
 import yt_dlp
@@ -84,7 +85,7 @@ class ProgressHook:
                     s=self.task.get("video").get_stage_text(lower=True),
                     p=str(pc).rjust(5, " ")),
             })
-            self.update_status(task)
+            self.update_status(self.task)
         self._last_update = time.time()
 
     def downloading(self, data: dict) -> None:
@@ -99,7 +100,7 @@ class ProgressHook:
                 self.task.get("status").update({
                     "suffix": "\033[33m[!] DASH video\033[m",
                 })
-                self.update_status(task)
+                self.update_status(self.task)
                 self.task.get("video").dash_notified = True
             num = data.get("fragment_index")
             den = data.get("fargment_count")
@@ -124,6 +125,10 @@ class Logger:
 
     Skips most messages, and updates status of the instance video.
     """
+
+    _download_failure = "".join((
+        "[download] Got server HTTP error: ",
+        "<urlopen error timed out>"))
 
     _rex_retry = re.compile(r"Retrying \(attempt (?P<n>\d+) of (?P<m>\d+)\)")
 
@@ -208,6 +213,13 @@ class Logger:
                 "suffix": "\033[33m[!] Retry {n} / {m}\033[m".format(
                     n=group.get("n").rjust(len(group.get("m"))),
                     m=group.get("m")),
+            })
+            self._update()
+            return
+        if m == self._download_failure:
+            self.task.get("status").update({
+                "prefix": "\033[1;31m✘\033[m",
+                "body": "\033[31mFailed to download\033[m",
             })
             self._update()
             return
