@@ -100,7 +100,7 @@ def status_new_data_body(new_title: list, new_video: list) -> str:
             f"↳ \033[33mChanged title{s_t}\033[m:",
             *map(lambda x: f"  - {x[0]} => {x[1]}", new_title),
         ]
-        t_data_header.append(f"\033[33m{l_t} title{s_t} changed")
+        t_data_header.append(f"\033[33m{l_t} title{s_t} changed\033[m")
         t_data_body.extend(t_data_new_title)
     # If at least one new video, add data
     if l_v > 0:
@@ -310,11 +310,12 @@ class ChannelChecker:
         result_thread = CCResultThread(result_queue)
 
         for (idx, dat) in enumerate(self.data):
-            status = Status(
-                prefix="\033[33m?\033[m",
-                header="\033[35m{t}\033[m".format(
+            status = Status({
+                "prefix": "\033[33m?\033[m",
+                "header": "\033[35m{t}\033[m".format(
                     t=dat.get("title").ljust(status_header_pw)),
-                body="\033[30mPending\033[m")
+                "body": "\033[30mPending\033[m",
+            })
             dat.update({
                 "idx": idx + 1,
                 "status": status,

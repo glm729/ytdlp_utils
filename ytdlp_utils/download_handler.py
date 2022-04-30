@@ -7,11 +7,15 @@
 
 import argparse
 import queue
+import re
+import sys
 import threading
 import time
 import yt_dlp
 
 from overwriteable import Overwriteable
+from status import Status
+from video import Video
 
 
 # Function definitions
@@ -36,7 +40,11 @@ def store_video_data(video_ids) -> list:
     for vid in video_ids:
         header = "\033[35m{t}\033[m".format(t=vid.ljust(pw, " "))
         output.append({
-            "status": Status(prefix, header, body),
+            "status": Status({
+                "prefix": prefix,
+                "header": header,
+                "body": body,
+            }),
             "video": Video(vid),
         })
     return output
@@ -73,14 +81,11 @@ class ProgressHook:
         self.task.get("video").set_progress(pc)
         if time.time() > (self._last_update + 0.333):
             self.task.get("status").update({
-                "body": "Downloading {s}  {p}%".format(
+                "body": "Downloading {s} ({p}%)".format(
                     s=self.task.get("video").get_stage_text(lower=True),
                     p=str(pc).rjust(5, " ")),
             })
-            self.message({
-                "idx": self.task.get("idx"),
-                "text": self.task.get("status").status,
-            })
+            self.update_status(self.task)
         self._last_update = time.time()
 
     def downloading(self, data: dict) -> None:
@@ -92,7 +97,11 @@ class ProgressHook:
             return
         if data.get("info_dict").get("fragments", None) is not None:
             if not self.task.get("video").dash_notified:
-                pass
+                self.task.get("status").update({
+                    "suffix": "\033[33m[!] DASH video\033[m",
+                })
+                self.update_status(self.task)
+                self.task.get("video").dash_notified = True
             num = data.get("fragment_index")
             den = data.get("fargment_count")
         else:
@@ -100,86 +109,15 @@ class ProgressHook:
             den = data.get("total_bytes")
         self.check_percentage(num, den)
 
+    def update_status(self, task) -> None:
+        """Send the updated task status via the instance message queue
 
-class Status:
-    """Collect data relating to the status of an item"""
-
-    def __init__(self, prefix: str, header: str, body: str):
-        self.update({
-            "prefix": prefix,
-            "header": header,
-            "body": body,
+        @param task Task for which to update the status line
+        """
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
         })
-
-    def _build(self) -> None:
-        """Build the status text
-
-        Currently does not handle missing attributes.
-        """
-        self.status = "{p} {h} {b}".format(
-            p=self.prefix,
-            h=self.header,
-            b=self.body)
-
-    def update(self, data: dict) -> None:
-        """Update the status data
-
-        Builds the text after assignments.
-
-        @param data Dict of data to use for updating status
-        """
-        for (k, v) in data.items():
-            if not k in ["prefix", "header", "body"]:
-                continue
-            setattr(self, k, v)
-        self._build()
-
-
-class Video:
-    """Class to collect and handle data for each video download"""
-
-    _stage = {
-        0: "Video",
-        1: "Audio",
-    }
-
-    def __init__(self, video_id: str):
-        self.already_downloaded = False
-        self.id = video_id
-        self.progress = {
-            0: 0.0,
-            1: 0.0,
-        }
-        self.stage = None
-
-    def get_stage_text(self, lower: bool = False) -> str:
-        """Get the text representing the current stage
-
-        @param lower Should the text be returned as lowercase?
-        @return "Video" or "Audio", optionally lowercase
-        """
-        t = self._stage.get(self.stage)
-        return t.lower() if lower else t
-
-    def set_progress(self, percentage: float) -> None:
-        """Set the progress for the current download stage
-
-        Updates the progress according to the current download stage.
-
-        @param percentage Percentage completion of the current download
-        """
-        self.progress.update({ self.stage: percentage, })
-
-    def set_stage(self, stage: int) -> None:
-        """Set the video download stage
-
-        Stage must only be 0 or 1 -- video or audio.
-
-        @param stage Download stage: 0 == video, 1 == audio
-        """
-        if not stage in [0, 1]:
-            raise RuntimeError("Stage must only be 0 or 1")
-        self.stage = stage
 
 
 class Logger:
@@ -187,6 +125,12 @@ class Logger:
 
     Skips most messages, and updates status of the instance video.
     """
+
+    _download_failure = "".join((
+        "[download] Got server HTTP error: ",
+        "<urlopen error timed out>"))
+
+    _rex_retry = re.compile(r"Retrying \(attempt (?P<n>\d+) of (?P<m>\d+)\)")
 
     _skip_hints = (
         "[dashsegments]",
@@ -263,6 +207,22 @@ class Logger:
                 })
                 self._update()
                 return
+        if (match := self._rex_retry.search(m)) is not None:
+            group = match.groupdict()
+            self.task.get("status").update({
+                "suffix": "\033[33m[!] Retry {n} / {m}\033[m".format(
+                    n=group.get("n").rjust(len(group.get("m"))),
+                    m=group.get("m")),
+            })
+            self._update()
+            return
+        if m == self._download_failure:
+            self.task.get("status").update({
+                "prefix": "\033[1;31m✘\033[m",
+                "body": "\033[31mFailed to download\033[m",
+            })
+            self._update()
+            return
 
     def error(self, m: str) -> None:
         """Log error messages
@@ -378,10 +338,7 @@ class DHTaskThread(threading.Thread):
             "prefix": "\033[1;33m?\033[m",
             "body": "Starting",
         })
-        self.message({
-            "idx": task.get("idx"),
-            "text": task.get("status").status,
-        })
+        self.update_status(task)
 
         progress_hook = ProgressHook(task, self.message_queue)
 
@@ -394,8 +351,15 @@ class DHTaskThread(threading.Thread):
 
         time_start = time.time()
 
-        with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
-            yt.download((task.get("video").id,))
+        try:
+            with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
+                yt.download((task.get("video").id,))
+        except yt_dlp.utils.DownloadError:
+            task.get("status").update({
+                "prefix": "\033[1;31m✘\033[m",
+                "body": "\033[31mFailed to download\033[m",
+            })
+            self.update_status(task)
 
         time_end = time.time()
 
@@ -407,10 +371,7 @@ class DHTaskThread(threading.Thread):
             "body": "\033[32mDownloaded and merged\033[m in {t}s".format(
                 t=round(time_end - time_start, 1)),
         })
-        self.message({
-            "idx": task.get("idx"),
-            "text": task.get("status").status,
-        })
+        self.update_status(task)
 
     def run(self) -> None:
         """Run task thread operations
@@ -433,6 +394,16 @@ class DHTaskThread(threading.Thread):
         """Stop the task handler operations"""
         self._stopevent.set()
 
+    def update_status(self, task) -> None:
+        """Send the updated task status via the instance message queue
+
+        @param task Task for which to update the status line
+        """
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
+
 
 class DownloadHandler:
     """Handle batch-downloading of Youtube videos, using yt-dlp
@@ -449,6 +420,7 @@ class DownloadHandler:
             "bestvideo[height<=480]+bestaudio")),
         "merge_output_format": "mkv",
         "outtmpl": "%(uploader)s/%(title)s.%(ext)s",
+        "retries": 99,
     }
 
     def __init__(self, video_ids: list = None, max_threads: int = None):
@@ -462,7 +434,7 @@ class DownloadHandler:
         if video_ids is None:
             self.videos = None
         else:
-            self.store_video_data(video_ids)
+            self.videos = store_video_data(video_ids)
         self.max_threads = max_threads
 
     def message(self, data: dict) -> None:
@@ -545,13 +517,6 @@ class DownloadHandler:
         self.message_queue.join()
         self.message_thread.stop()
         self.message_thread.join()
-
-    def store_video_data(self, video_ids: list) -> None:
-        """Store video data in the instance
-
-        @param video_ids List or tuple of video ID data to store
-        """
-        self.videos = store_video_data(video_ids)
 
 
 # Main function

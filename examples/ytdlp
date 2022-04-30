@@ -25,8 +25,8 @@ def main() -> None:
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "file_path",
-        metavar="FILE_PATH",
+        "file",
+        metavar="FILE",
         type=str,
         help="Path to the video links text file")
 
@@ -39,12 +39,9 @@ def main() -> None:
 
     args = vars(parser.parse_args())
 
-    link_parser = TextLinkParser(args.get("file_path"))
+    link_parser = TextLinkParser(args.get("file"))
 
-    if len(link_parser.video_ids) == 0:
-        return
-
-    dh = DownloadHandler(link_parser.video_ids, args.get("threads"))
+    dh = DownloadHandler(link_parser.extract(), args.get("threads"))
 
     dh.run()
 
