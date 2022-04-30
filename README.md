@@ -43,10 +43,10 @@ output.
 ## Contributors
 
 
-* Me (@glm729)
-* @TheSpectacledOne:
+* Me (@glm729)[me]
+* @TheSpectacledOne[tso]:
   * WSL testing and general ideas
-* @tecosaur:
+* @tecosaur[tos]:
   * _Overwriteable_ definition; ported from his example in Julia
 
 
@@ -54,4 +54,7 @@ _This project is written as a wrapper for the yt-dlp utility [(project
 page)][ytdlp]._
 
 
+[me]: https://github.com/glm729
+[tso]: https://github.com/TheSpectacledOne
+[tos]: https://github.com/tecosaur
 [ytdlp]: https://github.com/yt-dlp/yt-dlp
