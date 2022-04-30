@@ -43,10 +43,10 @@ output.
 ## Contributors
 
 
-* Me (@glm729)[me]
-* @TheSpectacledOne[tso]:
+* Me ([@glm729][me])
+* [@TheSpectacledOne][tso]:
   * WSL testing and general ideas
-* @tecosaur[tos]:
+* [@tecosaur][tos]:
   * _Overwriteable_ definition; ported from his example in Julia
 
 
