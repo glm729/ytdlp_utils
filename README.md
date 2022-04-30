@@ -7,10 +7,9 @@
 
 This repository contains a "module-like" collection of scripts and class
 definitions used for wrapping the [yt-dlp utility][ytdlp].  The current state
-permits batch handling of video downloads, either serially or concurrently, or
-playlist downloads.  Serial batch downloads are handled using the Python API
-directly; concurrent and playlist downloads are currently handled using the
-`subprocess` module to call the yt-dlp CLI.
+permits batch handling of video downloads, either serially or concurrently, and
+playlist downloads.  Channel data can also be checked according to a channel
+data file, which defaults to concurrent data retrieval.
 
 
 ## Current state
@@ -18,19 +17,18 @@ directly; concurrent and playlist downloads are currently handled using the
 
 Currently, the wrapper provides more interesting messages (as well as less text
 overall) such as individual video download progress and stage, and handles
-circumstances such as a "speed sink" or other failure.  This permits automated
-restarting of the download should it be jammed at a low speed (sub-1.0MiB/s) or
-should permission be denied by request frequency.
+retry messages and retry failures.
 
 Some important scenarios are as yet unhandled.  Please open a ticket if you
 would like to request a possible change, or fork this repo and make a pull
 request if you would like to make a direct contribution.  Furthermore, I'm not
 an expert developer and this is a bit of a pet project, so there will be wonky
 bits, rough edges, and a somewhat slow dev cycle.  I am also exclusively
-developing this on a Ubuntu system so there may be cross-platform
-incompatibilities.  For example, there is a known bug (of currently unknown
-cause or source) running subprocess calls on the WSL, which doesn't stop the
-video successfully downloading, but breaks console output.
+developing this on Linux systems (previously Ubuntu, now Fedora) so there may
+be cross-platform incompatibilities.  For example, there is a known bug (of
+currently unknown cause or source) running subprocess calls on the Ubuntu WSL,
+which doesn't stop the video successfully downloading, but breaks console
+output.
 
 
 ## Changes
@@ -38,12 +36,22 @@ video successfully downloading, but breaks console output.
 
 **Future changes may include:**
 
-- Renaming of components
-- Restructuring to permit usage of the yt-dlp Python API
+* Renaming of components
+* Additional exception or failure handling
+
+
+## Contributors
+
+
+* Me (@glm729)
+* @TheSpectacledOne:
+  * WSL testing and general ideas
+* @tecosaur:
+  * _Overwriteable_ definition; ported from his example in Julia
 
 
 _This project is written as a wrapper for the yt-dlp utility [(project
 page)][ytdlp]._
 
 
-[ytdlp]:https://github.com/yt-dlp/yt-dlp
+[ytdlp]: https://github.com/yt-dlp/yt-dlp
