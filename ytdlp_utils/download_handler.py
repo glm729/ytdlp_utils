@@ -7,6 +7,8 @@
 
 import argparse
 import queue
+import re
+import sys
 import threading
 import time
 import yt_dlp
@@ -83,10 +85,7 @@ class ProgressHook:
                     s=self.task.get("video").get_stage_text(lower=True),
                     p=str(pc).rjust(5, " ")),
             })
-            self.message({
-                "idx": self.task.get("idx"),
-                "text": self.task.get("status").status,
-            })
+            self.update_status(self.task)
         self._last_update = time.time()
 
     def downloading(self, data: dict) -> None:
@@ -98,7 +97,11 @@ class ProgressHook:
             return
         if data.get("info_dict").get("fragments", None) is not None:
             if not self.task.get("video").dash_notified:
-                pass
+                self.task.get("status").update({
+                    "suffix": "\033[33m[!] DASH video\033[m",
+                })
+                self.update_status(self.task)
+                self.task.get("video").dash_notified = True
             num = data.get("fragment_index")
             den = data.get("fargment_count")
         else:
@@ -106,12 +109,28 @@ class ProgressHook:
             den = data.get("total_bytes")
         self.check_percentage(num, den)
 
+    def update_status(self, task) -> None:
+        """Send the updated task status via the instance message queue
+
+        @param task Task for which to update the status line
+        """
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
+
 
 class Logger:
     """Custom logger definition for yt_dlp.YoutubeDL
 
     Skips most messages, and updates status of the instance video.
     """
+
+    _download_failure = "".join((
+        "[download] Got server HTTP error: ",
+        "<urlopen error timed out>"))
+
+    _rex_retry = re.compile(r"Retrying \(attempt (?P<n>\d+) of (?P<m>\d+)\)")
 
     _skip_hints = (
         "[dashsegments]",
@@ -188,6 +207,22 @@ class Logger:
                 })
                 self._update()
                 return
+        if (match := self._rex_retry.search(m)) is not None:
+            group = match.groupdict()
+            self.task.get("status").update({
+                "suffix": "\033[33m[!] Retry {n} / {m}\033[m".format(
+                    n=group.get("n").rjust(len(group.get("m"))),
+                    m=group.get("m")),
+            })
+            self._update()
+            return
+        if m == self._download_failure:
+            self.task.get("status").update({
+                "prefix": "\033[1;31m✘\033[m",
+                "body": "\033[31mFailed to download\033[m",
+            })
+            self._update()
+            return
 
     def error(self, m: str) -> None:
         """Log error messages
@@ -303,10 +338,7 @@ class DHTaskThread(threading.Thread):
             "prefix": "\033[1;33m?\033[m",
             "body": "Starting",
         })
-        self.message({
-            "idx": task.get("idx"),
-            "text": task.get("status").status,
-        })
+        self.update_status(task)
 
         progress_hook = ProgressHook(task, self.message_queue)
 
@@ -319,8 +351,15 @@ class DHTaskThread(threading.Thread):
 
         time_start = time.time()
 
-        with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
-            yt.download((task.get("video").id,))
+        try:
+            with yt_dlp.YoutubeDL(task.get("ytdlp_options")) as yt:
+                yt.download((task.get("video").id,))
+        except yt_dlp.utils.DownloadError:
+            task.get("status").update({
+                "prefix": "\033[1;31m✘\033[m",
+                "body": "\033[31mFailed to download\033[m",
+            })
+            self.update_status(task)
 
         time_end = time.time()
 
@@ -332,10 +371,7 @@ class DHTaskThread(threading.Thread):
             "body": "\033[32mDownloaded and merged\033[m in {t}s".format(
                 t=round(time_end - time_start, 1)),
         })
-        self.message({
-            "idx": task.get("idx"),
-            "text": task.get("status").status,
-        })
+        self.update_status(task)
 
     def run(self) -> None:
         """Run task thread operations
@@ -357,6 +393,16 @@ class DHTaskThread(threading.Thread):
     def stop(self) -> None:
         """Stop the task handler operations"""
         self._stopevent.set()
+
+    def update_status(self, task) -> None:
+        """Send the updated task status via the instance message queue
+
+        @param task Task for which to update the status line
+        """
+        self.message({
+            "idx": task.get("idx"),
+            "text": task.get("status").status,
+        })
 
 
 class DownloadHandler:
