@@ -180,7 +180,7 @@ class Logger:
         if m.endswith("has already been downloaded"):
             self.task.get("video").already_downloaded = True
             self.task.get("status").update({
-                "prefix": "\033[1;32m✔\033[m",
+                "prefix": "\033[1;32m✓\033[m",
                 "body": "\033[32mAlready downloaded\033[m",
             })
             self._update()
@@ -367,7 +367,7 @@ class DHTaskThread(threading.Thread):
             return
 
         task.get("status").update({
-            "prefix": "\033[1;32m✔\033[m",
+            "prefix": "\033[1;32m✓\033[m",
             "body": "\033[32mDownloaded and merged\033[m in {t}s".format(
                 t=round(time_end - time_start, 1)),
         })
