@@ -1,2 +1,6 @@
+# Data and temp files
+.data/
+.tmp/
+
 # Python artefacts
 __pycache__/
