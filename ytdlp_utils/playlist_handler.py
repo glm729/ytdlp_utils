@@ -10,8 +10,8 @@ import sys
 import time
 import yt_dlp
 
-from download_handler import Status
-from download_handler import Video
+from status import Status
+from video import Video
 
 from download_handler import DHTaskThread
 from download_handler import DownloadHandler
