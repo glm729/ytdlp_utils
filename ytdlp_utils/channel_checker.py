@@ -69,7 +69,7 @@ def status_new_data(status, new_title: list, new_video: list):
     @param new_video List of new videos
     @return Mutated status object; updated prefix and body
     """
-    prefix = "\033[1;32m✔\033[m"
+    prefix = "\033[1;32m✓\033[m"
     body = status_new_data_body(new_title, new_video)
     status.update({ "prefix": prefix, "body": body, })
     return status
