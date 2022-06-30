@@ -6,6 +6,7 @@
 
 
 import queue
+import os
 import sys
 import time
 import yt_dlp
@@ -159,30 +160,50 @@ class PlaylistHandler(DownloadHandler):
             "text": f"\033[1;32m⁜\033[m Downloading {l} video{s}",
         })
 
-        task_queue = queue.Queue()
-        for (idx, vid) in enumerate(self.videos):
-            task_queue.put(vid)
-            self.message({
-                "idx": vid.get("idx"),
-                "text": vid.get("status").status,
-            })
+        task_queues = []
+        threads = []
 
-        workers = []
+        # Cap number of threads based on terminal size or manual limit
+        #= FIXME =#
+        # This needs to be tested and improved!
+        lt = os.get_terminal_size().lines - 3
         if self.max_threads is None:
-            n_workers = len(self.videos)
+            lv = len(self.videos)
+            if lv > lt:
+                n_threads = lt
+            else:
+                n_threads = lv
         else:
-            n_workers = self.max_threads
-        for _ in range(0, n_workers):
-            workers.append(DHTaskThread(task_queue, self.message_queue))
+            if self.max_threads > lt:
+                n_threads = lt
+            else:
+                n_threads = self.max_threads
 
-        for w in workers:
-            w.start()
-        for w in workers:
-            w.stop()
+        for i in range(0, n_threads):
+            task_queue = queue.Queue()
+            for j in range(i, len(self.videos), n_threads):
+                vid = self.videos[j]
+                vid.update({
+                    "idx": i + 1,  # Hardcoded offset
+                })
+                task_queue.put(vid)
+                self.message({
+                    "idx": vid.get("idx"),
+                    "text": vid.get("status").status,
+                })
+            thread = DHTaskThread(task_queue, self.message_queue)
+            task_queues.append(task_queue)
+            threads.append(thread)
 
-        task_queue.join()
-        for w in workers:
-            w.join()
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.stop()
+
+        for t in task_queues:
+            t.join()
+        for t in threads:
+            t.join()
 
         time_end = time.time()
 
