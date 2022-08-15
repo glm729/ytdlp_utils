@@ -107,6 +107,8 @@ class ProgressHook:
         else:
             num = data.get("downloaded_bytes")
             den = data.get("total_bytes")
+        if num is None:
+            num = 0
         self.check_percentage(num, den)
 
     def update_status(self, task) -> None:
