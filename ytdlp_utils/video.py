@@ -15,6 +15,7 @@ class Video:
 
     def __init__(self, video_id: str):
         self.already_downloaded = False
+        self.dash_notified = False
         self.id = video_id
         self.progress = {
             0: 0.0,
@@ -50,4 +51,3 @@ class Video:
         if not stage in [0, 1]:
             raise RuntimeError("Stage must only be 0 or 1")
         self.stage = stage
-
