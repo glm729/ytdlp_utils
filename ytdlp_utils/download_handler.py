@@ -103,7 +103,7 @@ class ProgressHook:
                 self.update_status(self.task)
                 self.task.get("video").dash_notified = True
             num = data.get("fragment_index")
-            den = data.get("fargment_count")
+            den = data.get("fragment_count")
         else:
             num = data.get("downloaded_bytes")
             den = data.get("total_bytes")
