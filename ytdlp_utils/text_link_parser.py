@@ -17,7 +17,7 @@ import re
 REX_DEFAULT = [
     re.compile(r"[\?&]v\=(?P<id>[^\?&]+)"),                # Normal
     re.compile(r"youtube\.com\/shorts\/(?P<id>[^\?&]+)"),  # "Shorts"
-    re.compile(r"youtu\.be\/(?P<id>[\?&]+)"),              # Compact
+    re.compile(r"youtu\.be\/(?P<id>[^\?&]+)"),             # Compact
 ]
 
 
