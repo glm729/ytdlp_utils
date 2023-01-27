@@ -1,6 +1,7 @@
-# Data and temp files
-.data/
-.tmp/
+# Data, testing, and temp files directories
+/data
+/test
+/tmp
 
 # Python artefacts
 __pycache__/
