@@ -1,5 +1,5 @@
 # YT-DLP Utils
-#### Mr. George L. Malone; 2021-2022
+#### Mr. George L. Malone; 2021-2023
 
 
 ## Overview
@@ -36,25 +36,28 @@ output.
 
 **Future changes may include:**
 
-* Renaming of components
-* Additional exception or failure handling
+- Renaming of components
+- Additional exception or failure handling
 
 
 ## Contributors
 
 
-* Me ([@glm729][me])
-* [@TheSpectacledOne][tso]:
-  * WSL testing and general ideas
-* [@tecosaur][tos]:
-  * _Overwriteable_ definition; ported from his example in Julia
+- Me ([@glm729][me])
+- [@TheSpectacledOne][tso]:
+  - WSL testing and general ideas
+- [@tecosaur][tec]:
+  - *Overwriteable* definition; ported from his example in Julia
 
 
-_This project is written as a wrapper for the yt-dlp utility [(project
-page)][ytdlp]._
+----
+
+
+*This project is written as a wrapper for the yt-dlp utility [(project
+page)][ytdlp].*
 
 
 [me]: https://github.com/glm729
+[tec]: https://github.com/tecosaur
 [tso]: https://github.com/TheSpectacledOne
-[tos]: https://github.com/tecosaur
 [ytdlp]: https://github.com/yt-dlp/yt-dlp
