@@ -222,6 +222,7 @@ class Logger:
             self.task.get("status").update({
                 "prefix": "\033[1;31m✘\033[m",
                 "body": "\033[31mFailed to download\033[m",
+                "suffix": "\033[31m[!]\033[m",
             })
             self._update()
             return
@@ -235,6 +236,7 @@ class Logger:
         self.task.get("status").update({
             "body": "Received error message {n}".format(
                 n=self._count.get("error")),
+            "suffix": "\033[31m[!]\033[m",
         })
         self._update()
 
